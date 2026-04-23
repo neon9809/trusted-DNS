@@ -62,6 +62,57 @@ Trusted-DNS adopts a **Cloudflare Worker + Local Docker Node** dual-side archite
 - Single `docker-compose.yml` deployment with minimal configuration
 - Worker deploys to Cloudflare Workers with Durable Objects for state management
 
+## Verification
+
+The following end-to-end test was performed with a live Docker node connected to a deployed Worker instance. Bootstrap succeeded on the first attempt, and all encrypted query/response round-trips completed without errors.
+
+```text
+$ docker run -d --name trusted-dns \
+  -p 53:53/udp \
+  -e WORKER_URL="https://your-worker.example.com" \
+  -e ROOT_SEED="$(openssl rand -hex 32)" \
+  ghcr.io/neon9809/trusted-dns-docker:latest
+
+$ docker logs trusted-dns
+[main] Trusted-DNS Docker node starting...
+[main] client_id_prefix: 4a545d971cb4372e
+[transport] starting bootstrap...
+[transport] bootstrap success: gen=1, tickets=5
+[session] installed bundle gen=1 with 5 tickets, budget=1000
+[listener] DNS listener started on 0.0.0.0:53
+[main] Trusted-DNS Docker node ready
+```
+
+```text
+$ dig @127.0.0.1 google.com A +short
+142.251.140.238
+
+$ dig @127.0.0.1 cloudflare.com A +short
+104.16.132.229
+104.16.133.229
+
+$ dig @127.0.0.1 github.com A +short
+140.82.121.3
+
+$ dig @127.0.0.1 baidu.com A +short
+110.242.74.102
+124.237.177.164
+111.63.65.247
+111.63.65.103
+
+$ dig @127.0.0.1 google.com AAAA +short
+2a00:1450:4003:818::200e
+
+$ dig @127.0.0.1 gmail.com MX +short
+5 gmail-smtp-in.l.google.com.
+10 alt1.gmail-smtp-in.l.google.com.
+20 alt2.gmail-smtp-in.l.google.com.
+30 alt3.gmail-smtp-in.l.google.com.
+40 alt4.gmail-smtp-in.l.google.com.
+```
+
+All record types (A, AAAA, MX) resolved correctly. The response rewriter also reordered multi-record answers for improved connection quality.
+
 ## Quick Start
 
 ### Prerequisites
