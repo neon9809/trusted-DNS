@@ -1,0 +1,22 @@
+services:
+  trusted-dns:
+    image: ghcr.io/neon9809/trusted-dns-docker:latest
+    container_name: trusted-dns
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+    environment:
+      WORKER_URL: "https://your-worker.workers.dev"
+      ROOT_SEED: "replace-with-your-64-char-hex-seed"
+      PROBE_MODE: "tcp443"
+      LISTEN_ADDR: "0.0.0.0:53"
+    cap_add:
+      - NET_RAW
+    dns:
+      - 127.0.0.1
+    networks:
+      - trusted-dns
+
+networks:
+  trusted-dns:
+    driver: bridge

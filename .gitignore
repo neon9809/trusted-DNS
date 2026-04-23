@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+/trusted-dns-binary
+
+# Worker build
+worker/.wrangler/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files (may contain secrets)
+.env
+.env.local
+*.env
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# Logs
+*.log

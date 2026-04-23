@@ -1,0 +1,40 @@
+# Trusted-DNS Docker Compose Example
+#
+# This example shows how to deploy the Trusted-DNS Docker node.
+# Replace placeholder values with your actual configuration.
+#
+# Usage:
+#   1. Copy this file to docker-compose.yml
+#   2. Replace WORKER_URL with your Cloudflare Worker URL
+#   3. Replace ROOT_SEED with a shared 64-character hex secret
+#   4. Run: docker compose up -d
+
+services:
+  trusted-dns:
+    image: ghcr.io/neon9809/trusted-dns-docker:latest
+    container_name: trusted-dns
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+    environment:
+      # Required: Your Cloudflare Worker URL
+      WORKER_URL: "https://trusted-dns-worker.your-account.workers.dev"
+
+      # Required: Shared secret (64-character hex string)
+      # Generate with: openssl rand -hex 32
+      ROOT_SEED: "replace-with-your-64-char-hex-seed"
+
+      # Optional: Probe mode for A/AAAA record optimization
+      # Options: none, tcp443, icmp, icmp,tcp443
+      PROBE_MODE: "tcp443"
+
+      # Optional: Listen address (default: 0.0.0.0:53)
+      LISTEN_ADDR: "0.0.0.0:53"
+    cap_add:
+      - NET_RAW
+    networks:
+      - trusted-dns
+
+networks:
+  trusted-dns:
+    driver: bridge

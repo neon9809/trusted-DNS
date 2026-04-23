@@ -1,0 +1,16 @@
+name = "trusted-dns-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[vars]
+# ROOT_SEED = "replace-with-your-bootstrap-seed"
+# DOH_UPSTREAMS = '["https://dns.google/dns-query","https://cloudflare-dns.com/dns-query","https://1.1.1.1/dns-query"]'
+
+[durable_objects]
+bindings = [
+  { name = "GENERATION_STORE", class_name = "GenerationStore" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["GenerationStore"]

@@ -1,0 +1,389 @@
+// Package transport implements the secure HTTPS transport between
+// Docker and Worker, handling binary protocol encoding/decoding,
+// encryption/decryption, and HTTP communication.
+package transport
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/neon9809/trusted-dns/docker/internal/protocol"
+	"github.com/neon9809/trusted-dns/docker/internal/session"
+)
+
+// Transport handles communication with the Worker.
+type Transport struct {
+	workerURL  string
+	httpClient *http.Client
+	session    *session.Manager
+	keys       *protocol.DerivedKeys
+}
+
+// New creates a new Transport.
+func New(workerURL string, sess *session.Manager, keys *protocol.DerivedKeys) *Transport {
+	return &Transport{
+		workerURL: workerURL,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		session: sess,
+		keys:    keys,
+	}
+}
+
+// Bootstrap performs the initial bootstrap handshake with the Worker.
+func (t *Transport) Bootstrap(ctx context.Context) (*protocol.KeyBundle, error) {
+	log.Println("[transport] starting bootstrap...")
+
+	// Generate boot nonce
+	bootNonce, err := protocol.RandomBytes(protocol.BootNonceSize)
+	if err != nil {
+		return nil, fmt.Errorf("gen boot nonce: %w", err)
+	}
+
+	timestampMs := uint64(time.Now().UnixMilli())
+
+	// Compute bootstrap proof
+	proof := protocol.ComputeBootstrapProof(t.keys.BootstrapKey, bootNonce, timestampMs)
+
+	// Build payload: boot_nonce(16) + timestamp_ms(8) + bootstrap_proof(16) + capabilities(4)
+	payload := make([]byte, 16+8+16+4)
+	copy(payload[0:16], bootNonce)
+	binary.BigEndian.PutUint64(payload[16:24], timestampMs)
+	copy(payload[24:40], proof)
+	binary.BigEndian.PutUint32(payload[40:44], 0x03) // capabilities: ICMP + TCP probe
+
+	// Build header
+	prefix := t.session.GetClientIDPrefix()
+	header := &protocol.Header{
+		Ver:            protocol.ProtocolVersion,
+		MsgType:        protocol.MsgBootstrapReq,
+		Flags:          0,
+		ClientIDPrefix: prefix,
+		BundleGen:      0,
+		TicketID:       0,
+		Seq:            0,
+		PayloadLen:     uint32(len(payload)),
+		HeaderMAC:      0,
+	}
+
+	// Send request
+	respData, err := t.sendRequest(ctx, header, payload)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap request: %w", err)
+	}
+
+	// Parse response
+	respHeader, err := protocol.DecodeHeader(respData)
+	if err != nil {
+		return nil, fmt.Errorf("decode bootstrap resp header: %w", err)
+	}
+
+	if respHeader.MsgType == protocol.MsgErrorResp {
+		errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
+		return nil, fmt.Errorf("bootstrap error: %s", errResp.Error())
+	}
+
+	if respHeader.MsgType != protocol.MsgBootstrapResp {
+		return nil, fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
+	}
+
+	respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
+
+	// Parse: server_time_ms(8) + bundle_gen(8) + nonce(12) + ciphertext
+	if len(respPayload) < 28 {
+		return nil, fmt.Errorf("bootstrap response payload too short")
+	}
+
+	// serverTimeMs := binary.BigEndian.Uint64(respPayload[0:8])
+	bundleGen := binary.BigEndian.Uint64(respPayload[8:16])
+	nonce := respPayload[16:28]
+	ciphertext := respPayload[28:]
+
+	// Build AAD for decryption (response header with correct fields)
+	aadHeader := &protocol.Header{
+		Ver:            protocol.ProtocolVersion,
+		MsgType:        protocol.MsgBootstrapResp,
+		Flags:          0,
+		ClientIDPrefix: respHeader.ClientIDPrefix,
+		BundleGen:      bundleGen,
+		TicketID:       0,
+		Seq:            0,
+		PayloadLen:     0,
+		HeaderMAC:      0,
+	}
+	aad := protocol.EncodeHeader(aadHeader)
+
+	// Decrypt KeyBundle
+	bundleBytes, err := protocol.AEADDecrypt(t.keys.BundleWrapKey, nonce, ciphertext, aad)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt key bundle: %w", err)
+	}
+
+	bundle, err := protocol.DeserializeKeyBundle(bundleBytes)
+	if err != nil {
+		return nil, fmt.Errorf("deserialize key bundle: %w", err)
+	}
+
+	log.Printf("[transport] bootstrap success: gen=%d, tickets=%d",
+		bundle.BundleGen, len(bundle.SessionTickets))
+
+	return bundle, nil
+}
+
+// Query sends an encrypted DNS query through the Worker.
+func (t *Transport) Query(ctx context.Context, dnsQuery []byte) ([]byte, error) {
+	// Acquire a ticket
+	ticketInfo, err := t.session.AcquireTicket()
+	if err != nil {
+		return nil, fmt.Errorf("acquire ticket: %w", err)
+	}
+
+	bundle := t.session.GetBundle()
+	if bundle == nil {
+		return nil, fmt.Errorf("no active bundle")
+	}
+
+	// Build header
+	prefix := t.session.GetClientIDPrefix()
+	header := &protocol.Header{
+		Ver:            protocol.ProtocolVersion,
+		MsgType:        protocol.MsgQueryReq,
+		Flags:          0,
+		ClientIDPrefix: prefix,
+		BundleGen:      bundle.BundleGen,
+		TicketID:       ticketInfo.Ticket.TicketID,
+		Seq:            ticketInfo.Seq,
+		PayloadLen:     0, // set later
+		HeaderMAC:      0,
+	}
+
+	// Build AAD from header
+	headerBytes := protocol.EncodeHeader(header)
+
+	// Encrypt DNS query
+	nonce, ciphertext, err := protocol.AEADEncrypt(
+		ticketInfo.QueryKeys.ReqKey, dnsQuery, headerBytes,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt dns query: %w", err)
+	}
+
+	// Build payload: ticket_blob(114) + nonce(12) + ciphertext
+	ticketBlob := protocol.EncodeSessionTicket(ticketInfo.Ticket)
+	payloadLen := len(ticketBlob) + len(nonce) + len(ciphertext)
+	payload := make([]byte, payloadLen)
+	off := 0
+	copy(payload[off:], ticketBlob); off += len(ticketBlob)
+	copy(payload[off:], nonce); off += len(nonce)
+	copy(payload[off:], ciphertext)
+
+	header.PayloadLen = uint32(payloadLen)
+
+	// Send request
+	respData, err := t.sendRequest(ctx, header, payload)
+	if err != nil {
+		return nil, fmt.Errorf("query request: %w", err)
+	}
+
+	// Parse response
+	respHeader, err := protocol.DecodeHeader(respData)
+	if err != nil {
+		return nil, fmt.Errorf("decode query resp header: %w", err)
+	}
+
+	if respHeader.MsgType == protocol.MsgErrorResp {
+		errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
+		return nil, fmt.Errorf("query error: %s", errResp.Error())
+	}
+
+	if respHeader.MsgType != protocol.MsgQueryResp {
+		return nil, fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
+	}
+
+	respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
+
+	// Parse: resolver_id(1) + transport_flags(1) + upstream_rtt_ms(2) + nonce(12) + ciphertext
+	if len(respPayload) < 16 {
+		return nil, fmt.Errorf("query response payload too short")
+	}
+
+	// resolverId := respPayload[0]
+	// transportFlags := respPayload[1]
+	// upstreamRttMs := binary.BigEndian.Uint16(respPayload[2:4])
+	respNonce := respPayload[4:16]
+	respCiphertext := respPayload[16:]
+
+	// Build AAD for decryption
+	respAadHeader := &protocol.Header{
+		Ver:            protocol.ProtocolVersion,
+		MsgType:        protocol.MsgQueryResp,
+		Flags:          0,
+		ClientIDPrefix: respHeader.ClientIDPrefix,
+		BundleGen:      respHeader.BundleGen,
+		TicketID:       respHeader.TicketID,
+		Seq:            respHeader.Seq,
+		PayloadLen:     0,
+		HeaderMAC:      0,
+	}
+	respAad := protocol.EncodeHeader(respAadHeader)
+
+	// Decrypt DNS response
+	dnsResp, err := protocol.AEADDecrypt(
+		ticketInfo.QueryKeys.RespKey, respNonce, respCiphertext, respAad,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt dns response: %w", err)
+	}
+
+	return dnsResp, nil
+}
+
+// Refresh performs a bundle refresh with the Worker.
+func (t *Transport) Refresh(ctx context.Context) (*protocol.KeyBundle, error) {
+	log.Println("[transport] starting refresh...")
+
+	bundle := t.session.GetBundle()
+	if bundle == nil {
+		return nil, fmt.Errorf("no active bundle for refresh")
+	}
+
+	refreshTicket := t.session.GetRefreshTicket()
+	if refreshTicket == nil {
+		return nil, fmt.Errorf("no refresh ticket available")
+	}
+
+	totalQueries := t.session.GetTotalQueries()
+
+	// Compute refresh proof
+	proof := protocol.ComputeRefreshProof(
+		t.keys.RefreshAuthKey,
+		refreshTicket.RefreshSeed[:],
+		bundle.BundleGen,
+		totalQueries,
+	)
+
+	// Build payload: refresh_ticket_blob(122) + spent_bundle_gen(8) +
+	//   spent_query_count(4) + refresh_proof(32) + requested_reason(1)
+	refreshBlob := protocol.EncodeRefreshTicket(refreshTicket)
+	payloadLen := len(refreshBlob) + 8 + 4 + 32 + 1
+	payload := make([]byte, payloadLen)
+	off := 0
+	copy(payload[off:], refreshBlob); off += len(refreshBlob)
+	binary.BigEndian.PutUint64(payload[off:], bundle.BundleGen); off += 8
+	binary.BigEndian.PutUint32(payload[off:], totalQueries); off += 4
+	copy(payload[off:], proof); off += 32
+	payload[off] = 0x00 // reason: budget exhausted
+
+	// Build header
+	prefix := t.session.GetClientIDPrefix()
+	header := &protocol.Header{
+		Ver:            protocol.ProtocolVersion,
+		MsgType:        protocol.MsgRefreshReq,
+		Flags:          0,
+		ClientIDPrefix: prefix,
+		BundleGen:      bundle.BundleGen,
+		TicketID:       0,
+		Seq:            0,
+		PayloadLen:     uint32(payloadLen),
+		HeaderMAC:      0,
+	}
+
+	// Send request
+	respData, err := t.sendRequest(ctx, header, payload)
+	if err != nil {
+		return nil, fmt.Errorf("refresh request: %w", err)
+	}
+
+	// Parse response
+	respHeader, err := protocol.DecodeHeader(respData)
+	if err != nil {
+		return nil, fmt.Errorf("decode refresh resp header: %w", err)
+	}
+
+	if respHeader.MsgType == protocol.MsgErrorResp {
+		errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
+		return nil, fmt.Errorf("refresh error: %s", errResp.Error())
+	}
+
+	if respHeader.MsgType != protocol.MsgRefreshResp {
+		return nil, fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
+	}
+
+	respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
+
+	// Parse: server_time_ms(8) + bundle_gen(8) + nonce(12) + ciphertext
+	if len(respPayload) < 28 {
+		return nil, fmt.Errorf("refresh response payload too short")
+	}
+
+	nonce := respPayload[16:28]
+	ciphertext := respPayload[28:]
+
+	// Build AAD
+	aadHeader := &protocol.Header{
+		Ver:            protocol.ProtocolVersion,
+		MsgType:        protocol.MsgRefreshResp,
+		Flags:          0,
+		ClientIDPrefix: respHeader.ClientIDPrefix,
+		BundleGen:      respHeader.BundleGen,
+		TicketID:       0,
+		Seq:            0,
+		PayloadLen:     0,
+		HeaderMAC:      0,
+	}
+	aad := protocol.EncodeHeader(aadHeader)
+
+	// Decrypt new KeyBundle
+	bundleBytes, err := protocol.AEADDecrypt(t.keys.BundleWrapKey, nonce, ciphertext, aad)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt new key bundle: %w", err)
+	}
+
+	newBundle, err := protocol.DeserializeKeyBundle(bundleBytes)
+	if err != nil {
+		return nil, fmt.Errorf("deserialize new key bundle: %w", err)
+	}
+
+	log.Printf("[transport] refresh success: new gen=%d", newBundle.BundleGen)
+
+	return newBundle, nil
+}
+
+// sendRequest sends a binary protocol message to the Worker.
+func (t *Transport) sendRequest(ctx context.Context, header *protocol.Header, payload []byte) ([]byte, error) {
+	headerBytes := protocol.EncodeHeader(header)
+
+	body := make([]byte, len(headerBytes)+len(payload))
+	copy(body, headerBytes)
+	copy(body[len(headerBytes):], payload)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", t.workerURL+"/dns-query", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if len(respBody) < protocol.HeaderSize {
+		return nil, fmt.Errorf("response too short: %d bytes", len(respBody))
+	}
+
+	return respBody, nil
+}

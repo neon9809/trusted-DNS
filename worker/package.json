@@ -1,0 +1,20 @@
+{
+  "name": "trusted-dns-worker",
+  "version": "0.1.0",
+  "description": "Trusted-DNS Cloudflare Worker - Secure DNS relay with DoH upstream",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "neon9809",
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260422.2",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.84.1"
+  }
+}
