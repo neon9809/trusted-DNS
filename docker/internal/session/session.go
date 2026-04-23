@@ -105,11 +105,12 @@ func (m *Manager) AcquireTicket() (*TicketInfo, error) {
 				Slot:      slot,
 			}
 
-			// Rotate to next ticket if this one is near exhaustion
-			if m.seqCounters[slot] >= ticket.CounterBase+uint32(ticket.QueryBudget) {
-				nextSlot := (slot + 1) % len(m.bundle.SessionTickets)
-				atomic.StoreInt32(&m.currentSlot, int32(nextSlot))
-			}
+				// Rotate to next ticket if this one is near exhaustion
+				if m.seqCounters[slot] >= ticket.CounterBase+uint32(ticket.QueryBudget) {
+					nextSlot := (slot + 1) % len(m.bundle.SessionTickets)
+					atomic.StoreInt32(&m.currentSlot, int32(nextSlot))
+					log.Printf("[session] ticket slot %d exhausted (seq=%d), rotating to slot %d", slot, m.seqCounters[slot], nextSlot)
+				}
 
 			return info, nil
 		}
@@ -132,7 +133,12 @@ func (m *Manager) NeedsRefresh() bool {
 	}
 
 	threshold := uint32(float64(m.bundle.Policy.QueriesPerBundle) * 0.9)
-	return m.totalQueries >= threshold
+	needs := m.totalQueries >= threshold
+	if needs {
+		log.Printf("[session] refresh needed: totalQueries=%d >= threshold=%d (budget=%d)",
+			m.totalQueries, threshold, m.bundle.Policy.QueriesPerBundle)
+	}
+	return needs
 }
 
 // GetRefreshTicket returns the refresh ticket for the current bundle.
