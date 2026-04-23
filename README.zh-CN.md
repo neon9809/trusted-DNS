@@ -189,6 +189,28 @@ docker pull ghcr.io/neon9809/trusted-dns-docker:latest
 | `DOH_UPSTREAMS` | 是 | — | DoH 上游 URL 的 JSON 数组 |
 | `DOH_TIMEOUT_MS` | 否 | `5000` | 每个上游的超时时间（毫秒） |
 
+## 多节点部署
+
+**每个 Docker 节点必须使用独立的 `ROOT_SEED`。** `client_id` 由 `ROOT_SEED` 通过 HKDF 确定性派生，这意味着两个共享同一 seed 的节点会产生相同的 `client_id`，并映射到 Worker 上同一个 Durable Object 实例。这将导致以下连锁故障：
+
+| 阶段 | 发生的问题 |
+|---|---|
+| **Bootstrap（引导）** | 两个节点推进同一个代际计数器。后启动的节点会立即使先启动节点的 KeyBundle 失效（`ERR_OLD_GENERATION`）。 |
+| **Query（查询）** | 两个节点持有从相同 `client_id` 和代际派生的完全相同的票据，序列号重叠会触发防重放检查（`ERR_REPLAY_SUSPECTED`）。 |
+| **Refresh（刷新）** | 两个节点竞争刷新同一代际，持续使对方的 bundle 失效，陷入循环。 |
+
+多节点部署的正确做法是为每个节点单独生成一个 `ROOT_SEED`：
+
+```bash
+# 节点 A
+ROOT_SEED=$(openssl rand -hex 32)
+
+# 节点 B
+ROOT_SEED=$(openssl rand -hex 32)
+```
+
+这样每个节点拥有独立的 `client_id`、独立的 Durable Object 实例和独立的票据生命周期，节点之间完全不会互相干扰。Worker 可以同时支持无限数量的独立节点。
+
 ## 协议概述
 
 Trusted-DNS 使用三阶段协议模型：

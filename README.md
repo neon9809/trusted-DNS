@@ -189,6 +189,28 @@ Point your devices' DNS settings to the Docker node's IP address. For example, i
 | `DOH_UPSTREAMS` | Yes | — | JSON array of DoH upstream URLs |
 | `DOH_TIMEOUT_MS` | No | `5000` | Per-upstream timeout in milliseconds |
 
+## Multi-Node Deployment
+
+**Each Docker node must use a unique `ROOT_SEED`.** The `client_id` is deterministically derived from `ROOT_SEED` via HKDF, meaning two nodes sharing the same seed will produce the same `client_id` and map to the same Durable Object instance on the Worker. This causes the following failure cascade:
+
+| Stage | What happens |
+|---|---|
+| **Bootstrap** | Both nodes advance the same generation counter. The node that bootstraps second immediately invalidates the first node's KeyBundle (`ERR_OLD_GENERATION`). |
+| **Query** | Both nodes hold identical tickets derived from the same `client_id` and generation. Overlapping sequence numbers trigger the anti-replay check (`ERR_REPLAY_SUSPECTED`). |
+| **Refresh** | Both nodes race to refresh the same generation, continuously invalidating each other's bundles. |
+
+The correct approach for multi-node deployments is to generate a separate `ROOT_SEED` for each node:
+
+```bash
+# Node A
+ROOT_SEED=$(openssl rand -hex 32)
+
+# Node B
+ROOT_SEED=$(openssl rand -hex 32)
+```
+
+Each node then has an independent `client_id`, an independent Durable Object instance, and an independent ticket lifecycle — with no interference between nodes. The Worker supports an unlimited number of independent nodes simultaneously.
+
 ## Protocol Overview
 
 Trusted-DNS uses a three-phase protocol model:
