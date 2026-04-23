@@ -303,8 +303,12 @@ async function handleQuery(
   const queryKeys = await deriveQueryKeys(ticket.resumeSeed);
 
   // Build AAD from header fields
-  const headerBytes = encodeHeader(header);
-  const aad = headerBytes;
+  // Docker encrypts before setting payloadLen, so AAD uses payloadLen=0 and headerMac=0
+  const aad = encodeHeader({
+    ...header,
+    payloadLen: 0,
+    headerMac: 0,
+  });
 
   // Decrypt DNS query
   let dnsQuery: Uint8Array;
