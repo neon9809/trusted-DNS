@@ -11,6 +11,16 @@
   "keywords": [],
   "author": "neon9809",
   "license": "MIT",
+  "cloudflare": {
+    "bindings": {
+      "ROOT_SEED": {
+        "description": "Shared secret between Worker and Docker node. Generate with `openssl rand -hex 32`. Must be a 64-character hex string."
+      },
+      "DOH_UPSTREAMS": {
+        "description": "JSON array of DoH upstream resolver URLs. Default: Google + Cloudflare."
+      }
+    }
+  },
   "packageManager": "pnpm@10.33.0",
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260422.2",

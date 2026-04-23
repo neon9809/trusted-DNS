@@ -1,5 +1,7 @@
 # Trusted-DNS
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 **Trusted-DNS** is an open-source DNS system designed for polluted network environments. It mitigates local ISP DNS pollution by routing DNS queries through a secure, encrypted private protocol between a local Docker node and a Cloudflare Worker, which then forwards standard DNS queries to trusted DoH (DNS over HTTPS) upstream resolvers.
 
 ## Architecture
@@ -69,6 +71,14 @@ Trusted-DNS adopts a **Cloudflare Worker + Local Docker Node** dual-side archite
 - A shared secret (ROOT_SEED): generate with `openssl rand -hex 32`
 
 ### 1. Deploy the Worker
+
+**Option A: One-Click Deploy (Recommended)**
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/neon9809/trusted-DNS/tree/main/worker)
+
+*Note: You will be prompted to enter a `ROOT_SEED` during deployment. Generate one using `openssl rand -hex 32`.*
+
+**Option B: Manual Deploy**
 
 ```bash
 cd worker
