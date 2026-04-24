@@ -134,9 +134,13 @@ func main() {
 }
 
 // refreshLoop periodically checks if the bundle needs refreshing.
+// If refresh fails more than 5 consecutive times, the process exits to restart the container.
 func refreshLoop(ctx context.Context, sess *session.Manager, trans *transport.Transport) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+
+	var consecutiveFailures int
+	const maxConsecutiveFailures = 5
 
 	for {
 		select {
@@ -147,9 +151,24 @@ func refreshLoop(ctx context.Context, sess *session.Manager, trans *transport.Tr
 				log.Println("[main] proactive refresh triggered")
 				newBundle, err := trans.Refresh(ctx)
 				if err != nil {
-					log.Printf("[main] proactive refresh failed: %v", err)
+					consecutiveFailures++
+					log.Printf("[main] proactive refresh failed (attempt %d/%d): %v",
+						consecutiveFailures, maxConsecutiveFailures, err)
+
+					if consecutiveFailures >= maxConsecutiveFailures {
+						log.Printf("[main] FATAL: refresh failed %d consecutive times, initiating container restart...",
+							maxConsecutiveFailures)
+						os.Exit(1)
+					}
 					continue
 				}
+
+				// Refresh succeeded, reset failure counter
+				if consecutiveFailures > 0 {
+					log.Printf("[main] refresh succeeded, resetting failure counter from %d", consecutiveFailures)
+					consecutiveFailures = 0
+				}
+
 				if err := sess.SetBundle(newBundle); err != nil {
 					log.Printf("[main] set refreshed bundle failed: %v", err)
 				}

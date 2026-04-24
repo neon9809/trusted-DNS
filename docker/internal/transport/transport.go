@@ -30,7 +30,7 @@ func New(workerURL string, sess *session.Manager, keys *protocol.DerivedKeys) *T
 	return &Transport{
 		workerURL: workerURL,
 		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 		session: sess,
 		keys:    keys,
@@ -245,7 +245,7 @@ func (t *Transport) Query(ctx context.Context, dnsQuery []byte) ([]byte, error) 
 	return dnsResp, nil
 }
 
-// Refresh performs a bundle refresh with the Worker.
+// Refresh performs a bundle refresh with the Worker, with retry logic.
 func (t *Transport) Refresh(ctx context.Context) (*protocol.KeyBundle, error) {
 	log.Println("[transport] starting refresh...")
 
@@ -295,65 +295,95 @@ func (t *Transport) Refresh(ctx context.Context) (*protocol.KeyBundle, error) {
 		HeaderMAC:      0,
 	}
 
-	// Send request
-	respData, err := t.sendRequest(ctx, header, payload)
-	if err != nil {
-		return nil, fmt.Errorf("refresh request: %w", err)
+	// Retry logic: up to 3 attempts with exponential backoff
+	const maxRetries = 3
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoffDur := time.Duration(1<<uint(attempt)) * time.Second
+			log.Printf("[transport] refresh retry attempt %d after %v backoff", attempt, backoffDur)
+			select {
+			case <-time.After(backoffDur):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("refresh context cancelled: %w", ctx.Err())
+			}
+		}
+
+		// Send request
+		respData, err := t.sendRequest(ctx, header, payload)
+		if err != nil {
+			lastErr = err
+			log.Printf("[transport] refresh request attempt %d failed: %v", attempt+1, err)
+			continue
+		}
+
+		// Parse response
+		respHeader, err := protocol.DecodeHeader(respData)
+		if err != nil {
+			lastErr = err
+			log.Printf("[transport] decode refresh resp attempt %d failed: %v", attempt+1, err)
+			continue
+		}
+
+		if respHeader.MsgType == protocol.MsgErrorResp {
+			errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
+			lastErr = fmt.Errorf("refresh error: %s", errResp.Error())
+			log.Printf("[transport] refresh error response attempt %d: %v", attempt+1, lastErr)
+			continue
+		}
+
+		if respHeader.MsgType != protocol.MsgRefreshResp {
+			lastErr = fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
+			log.Printf("[transport] unexpected response attempt %d: %v", attempt+1, lastErr)
+			continue
+		}
+
+		respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
+
+		// Parse: server_time_ms(8) + bundle_gen(8) + nonce(12) + ciphertext
+		if len(respPayload) < 28 {
+			lastErr = fmt.Errorf("refresh response payload too short")
+			log.Printf("[transport] short payload attempt %d: %v", attempt+1, lastErr)
+			continue
+		}
+
+		nonce := respPayload[16:28]
+		ciphertext := respPayload[28:]
+
+		// Build AAD
+		aadHeader := &protocol.Header{
+			Ver:            protocol.ProtocolVersion,
+			MsgType:        protocol.MsgRefreshResp,
+			Flags:          0,
+			ClientIDPrefix: respHeader.ClientIDPrefix,
+			BundleGen:      respHeader.BundleGen,
+			TicketID:       0,
+			Seq:            0,
+			PayloadLen:     0,
+			HeaderMAC:      0,
+		}
+		aad := protocol.EncodeHeader(aadHeader)
+
+		// Decrypt new KeyBundle
+		bundleBytes, err := protocol.AEADDecrypt(t.keys.BundleWrapKey, nonce, ciphertext, aad)
+		if err != nil {
+			lastErr = err
+			log.Printf("[transport] decrypt new bundle attempt %d failed: %v", attempt+1, err)
+			continue
+		}
+
+		newBundle, err := protocol.DeserializeKeyBundle(bundleBytes)
+		if err != nil {
+			lastErr = err
+			log.Printf("[transport] deserialize new bundle attempt %d failed: %v", attempt+1, err)
+			continue
+		}
+
+		log.Printf("[transport] refresh success: new gen=%d", newBundle.BundleGen)
+		return newBundle, nil
 	}
 
-	// Parse response
-	respHeader, err := protocol.DecodeHeader(respData)
-	if err != nil {
-		return nil, fmt.Errorf("decode refresh resp header: %w", err)
-	}
-
-	if respHeader.MsgType == protocol.MsgErrorResp {
-		errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
-		return nil, fmt.Errorf("refresh error: %s", errResp.Error())
-	}
-
-	if respHeader.MsgType != protocol.MsgRefreshResp {
-		return nil, fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
-	}
-
-	respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
-
-	// Parse: server_time_ms(8) + bundle_gen(8) + nonce(12) + ciphertext
-	if len(respPayload) < 28 {
-		return nil, fmt.Errorf("refresh response payload too short")
-	}
-
-	nonce := respPayload[16:28]
-	ciphertext := respPayload[28:]
-
-	// Build AAD
-	aadHeader := &protocol.Header{
-		Ver:            protocol.ProtocolVersion,
-		MsgType:        protocol.MsgRefreshResp,
-		Flags:          0,
-		ClientIDPrefix: respHeader.ClientIDPrefix,
-		BundleGen:      respHeader.BundleGen,
-		TicketID:       0,
-		Seq:            0,
-		PayloadLen:     0,
-		HeaderMAC:      0,
-	}
-	aad := protocol.EncodeHeader(aadHeader)
-
-	// Decrypt new KeyBundle
-	bundleBytes, err := protocol.AEADDecrypt(t.keys.BundleWrapKey, nonce, ciphertext, aad)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt new key bundle: %w", err)
-	}
-
-	newBundle, err := protocol.DeserializeKeyBundle(bundleBytes)
-	if err != nil {
-		return nil, fmt.Errorf("deserialize new key bundle: %w", err)
-	}
-
-	log.Printf("[transport] refresh success: new gen=%d", newBundle.BundleGen)
-
-	return newBundle, nil
+	return nil, fmt.Errorf("refresh failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // sendRequest sends a binary protocol message to the Worker.
