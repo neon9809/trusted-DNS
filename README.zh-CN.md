@@ -180,6 +180,7 @@ docker pull ghcr.io/neon9809/trusted-dns-docker:latest
 | `ROOT_SEED` | 是 | — | 共享的 64 字符十六进制密钥 |
 | `PROBE_MODE` | 否 | `tcp443` | 探测模式：`none`, `tcp443`, `icmp`, `icmp,tcp443` |
 | `LISTEN_ADDR` | 否 | `0.0.0.0:53` | DNS 监听地址 |
+| `PROTOCOL_PATH` | 否 | `/dns-query` | 自定义协议端点路径（必须与 Worker 端一致） |
 
 ### Worker 环境变量
 
@@ -188,6 +189,7 @@ docker pull ghcr.io/neon9809/trusted-dns-docker:latest
 | `ROOT_SEED` | 是 | — | 共享的 64 字符十六进制密钥（必须与 Docker 端一致） |
 | `DOH_UPSTREAMS` | 是 | — | DoH 上游 URL 的 JSON 数组 |
 | `DOH_TIMEOUT_MS` | 否 | `5000` | 每个上游的超时时间（毫秒） |
+| `PROTOCOL_PATH` | 否 | `/dns-query` | 自定义协议端点路径（必须与 Docker 端一致） |
 
 ## 多节点部署
 

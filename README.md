@@ -180,6 +180,7 @@ Point your devices' DNS settings to the Docker node's IP address. For example, i
 | `ROOT_SEED` | Yes | — | Shared 64-character hex secret |
 | `PROBE_MODE` | No | `tcp443` | Probe mode: `none`, `tcp443`, `icmp`, `icmp,tcp443` |
 | `LISTEN_ADDR` | No | `0.0.0.0:53` | DNS listener address |
+| `PROTOCOL_PATH` | No | `/dns-query` | Custom protocol endpoint path (must match Worker) |
 
 ### Worker Environment Variables
 
@@ -188,6 +189,7 @@ Point your devices' DNS settings to the Docker node's IP address. For example, i
 | `ROOT_SEED` | Yes | — | Shared 64-character hex secret (must match Docker) |
 | `DOH_UPSTREAMS` | Yes | — | JSON array of DoH upstream URLs |
 | `DOH_TIMEOUT_MS` | No | `5000` | Per-upstream timeout in milliseconds |
+| `PROTOCOL_PATH` | No | `/dns-query` | Custom protocol endpoint path (must match Docker) |
 
 ## Multi-Node Deployment
 

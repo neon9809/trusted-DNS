@@ -68,6 +68,7 @@ export interface Env {
   GENERATION_STORE: DurableObjectNamespace;
   DOH_TIMEOUT_MS?: string;
   DEBUG_MODE?: string;
+  PROTOCOL_PATH?: string;  // Custom path for the protocol endpoint (default: /dns-query)
 }
 
 // Global anti-replay cache (per Worker isolate)

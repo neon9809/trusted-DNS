@@ -17,6 +17,7 @@ export { GenerationStore };
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const protocolPath = env.PROTOCOL_PATH || '/dns-query';
 
     // Health check
     if (url.pathname === '/health' && request.method === 'GET') {
@@ -30,7 +31,7 @@ export default {
     }
 
     // Main protocol endpoint
-    if (url.pathname === '/dns-query' && request.method === 'POST') {
+    if (url.pathname === protocolPath && request.method === 'POST') {
       return handleRequest(request, env);
     }
 

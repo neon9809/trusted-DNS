@@ -10,6 +10,7 @@ services:
       ROOT_SEED: "replace-with-your-64-char-hex-seed"
       PROBE_MODE: "tcp443"
       LISTEN_ADDR: "0.0.0.0:53"
+      # PROTOCOL_PATH: "/dns-query"  # Optional: Custom protocol path (must match Worker's PROTOCOL_PATH)
     cap_add:
       - NET_RAW
     dns:

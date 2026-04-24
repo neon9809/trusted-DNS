@@ -30,6 +30,10 @@ services:
 
       # Optional: Listen address (default: 0.0.0.0:53)
       LISTEN_ADDR: "0.0.0.0:53"
+
+      # Optional: Custom protocol endpoint path (default: /dns-query)
+      # Must match Worker's PROTOCOL_PATH if customized.
+      # PROTOCOL_PATH: "/dns-query"
     cap_add:
       - NET_RAW
     networks:
