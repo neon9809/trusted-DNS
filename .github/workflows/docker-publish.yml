@@ -7,28 +7,27 @@ on:
   pull_request:
     branches: [main]
 
-# Filter to avoid unnecessary builds
-paths-filter:
-  runs-on: ubuntu-latest
-  outputs:
-    docker: ${{ steps.filter.outputs.docker }}
-    worker: ${{ steps.filter.outputs.worker }}
-  steps:
-    - uses: actions/checkout@v4
-    - uses: dorny/paths-filter@v2
-      id: filter
-      with:
-        filters: |
-          docker:
-            - 'docker/**'
-          worker:
-            - 'worker/**'
-
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/trusted-dns-docker
 
 jobs:
+  paths-filter:
+    runs-on: ubuntu-latest
+    outputs:
+      docker: ${{ steps.filter.outputs.docker }}
+      worker: ${{ steps.filter.outputs.worker }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            docker:
+              - 'docker/**'
+            worker:
+              - 'worker/**'
+
   build-and-push:
     runs-on: ubuntu-latest
     needs: paths-filter
