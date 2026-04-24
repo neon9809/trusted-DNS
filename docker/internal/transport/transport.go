@@ -19,21 +19,16 @@ import (
 
 // Transport handles communication with the Worker.
 type Transport struct {
-	workerURL    string
-	protocolPath string
-	httpClient   *http.Client
-	session      *session.Manager
-	keys         *protocol.DerivedKeys
+	workerURL  string
+	httpClient *http.Client
+	session    *session.Manager
+	keys       *protocol.DerivedKeys
 }
 
 // New creates a new Transport.
-func New(workerURL string, protocolPath string, sess *session.Manager, keys *protocol.DerivedKeys) *Transport {
-	if protocolPath == "" {
-		protocolPath = "/dns-query"
-	}
+func New(workerURL string, sess *session.Manager, keys *protocol.DerivedKeys) *Transport {
 	return &Transport{
-		workerURL:    workerURL,
-		protocolPath: protocolPath,
+		workerURL: workerURL,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -445,7 +440,7 @@ func (t *Transport) sendRequest(ctx context.Context, header *protocol.Header, pa
 	copy(body, headerBytes)
 	copy(body[len(headerBytes):], payload)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", t.workerURL+t.protocolPath, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", t.workerURL+"/dns-query", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
