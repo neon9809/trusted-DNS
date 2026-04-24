@@ -421,9 +421,13 @@ async function handleRefresh(
   const genResp = await doStub.fetch(new Request('https://do/get'));
   const genState = await genResp.json() as { latestBundleGen: number };
 
+  // CRITICAL: Verify ticket BEFORE advancing generation
+  // The ticket was created with the current generation, so we must verify
+  // against the current latestBundleGen, not after it's incremented.
+  const currentGen = BigInt(genState.latestBundleGen);
   const ticketError = await verifyRefreshTicket(
     refreshTicket, keys.refreshAuthKey, header.clientIdPrefix,
-    BigInt(genState.latestBundleGen), nowMs,
+    currentGen, nowMs,
   );
   if (ticketError) {
     return binaryResponse(
@@ -431,8 +435,8 @@ async function handleRefresh(
     );
   }
 
-  // Advance generation
-  const newGen = BigInt(genState.latestBundleGen + 1);
+  // Only advance generation AFTER successful verification
+  const newGen = currentGen + 1n;
   await doStub.fetch(new Request('https://do/advance', {
     method: 'POST',
     body: JSON.stringify({ newGen: Number(newGen) }),
