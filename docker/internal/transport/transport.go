@@ -41,100 +41,126 @@ func New(workerURL string, sess *session.Manager, keys *protocol.DerivedKeys) *T
 func (t *Transport) Bootstrap(ctx context.Context) (*protocol.KeyBundle, error) {
 	log.Println("[transport] starting bootstrap...")
 
-	// Generate boot nonce
-	bootNonce, err := protocol.RandomBytes(protocol.BootNonceSize)
-	if err != nil {
-		return nil, fmt.Errorf("gen boot nonce: %w", err)
+	// Retry logic for bootstrap: up to 5 attempts with backoff
+	const maxRetries = 5
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoffDur := time.Duration(1<<uint(attempt)) * time.Second
+			log.Printf("[transport] bootstrap retry attempt %d after %v backoff", attempt, backoffDur)
+			select {
+			case <-time.After(backoffDur):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("bootstrap context cancelled: %w", ctx.Err())
+			}
+		}
+
+		// Generate boot nonce
+		bootNonce, err := protocol.RandomBytes(protocol.BootNonceSize)
+		if err != nil {
+			lastErr = fmt.Errorf("gen boot nonce: %w", err)
+			continue
+		}
+
+		timestampMs := uint64(time.Now().UnixMilli())
+
+		// Compute bootstrap proof
+		proof := protocol.ComputeBootstrapProof(t.keys.BootstrapKey, bootNonce, timestampMs)
+
+		// Build payload: boot_nonce(16) + timestamp_ms(8) + bootstrap_proof(16) + capabilities(4)
+		payload := make([]byte, 16+8+16+4)
+		copy(payload[0:16], bootNonce)
+		binary.BigEndian.PutUint64(payload[16:24], timestampMs)
+		copy(payload[24:40], proof)
+		binary.BigEndian.PutUint32(payload[40:44], 0x03) // capabilities: ICMP + TCP probe
+
+		// Build header
+		prefix := t.session.GetClientIDPrefix()
+		header := &protocol.Header{
+			Ver:            protocol.ProtocolVersion,
+			MsgType:        protocol.MsgBootstrapReq,
+			Flags:          0,
+			ClientIDPrefix: prefix,
+			BundleGen:      0,
+			TicketID:       0,
+			Seq:            0,
+			PayloadLen:     uint32(len(payload)),
+			HeaderMAC:      0,
+		}
+
+		// Send request
+		respData, err := t.sendRequest(ctx, header, payload)
+		if err != nil {
+			lastErr = fmt.Errorf("bootstrap request: %w", err)
+			log.Printf("[transport] bootstrap attempt %d failed: %v", attempt+1, err)
+			continue
+		}
+
+		// Parse response
+		respHeader, err := protocol.DecodeHeader(respData)
+		if err != nil {
+			lastErr = fmt.Errorf("decode bootstrap resp header: %w", err)
+			continue
+		}
+
+		if respHeader.MsgType == protocol.MsgErrorResp {
+			errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
+			lastErr = fmt.Errorf("bootstrap error: %s", errResp.Error())
+			continue
+		}
+
+		if respHeader.MsgType != protocol.MsgBootstrapResp {
+			lastErr = fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
+			continue
+		}
+
+		respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
+
+		// Parse: server_time_ms(8) + bundle_gen(8) + nonce(12) + ciphertext
+		if len(respPayload) < 28 {
+			lastErr = fmt.Errorf("bootstrap response payload too short")
+			continue
+		}
+
+		bundleGen := binary.BigEndian.Uint64(respPayload[8:16])
+		nonce := respPayload[16:28]
+		ciphertext := respPayload[28:]
+
+		// Build AAD for decryption (response header with correct fields)
+		aadHeader := &protocol.Header{
+			Ver:            protocol.ProtocolVersion,
+			MsgType:        protocol.MsgBootstrapResp,
+			Flags:          0,
+			ClientIDPrefix: respHeader.ClientIDPrefix,
+			BundleGen:      bundleGen,
+			TicketID:       0,
+			Seq:            0,
+			PayloadLen:     0,
+			HeaderMAC:      0,
+		}
+		aad := protocol.EncodeHeader(aadHeader)
+
+		// Decrypt KeyBundle
+		bundleBytes, err := protocol.AEADDecrypt(t.keys.BundleWrapKey, nonce, ciphertext, aad)
+		if err != nil {
+			lastErr = fmt.Errorf("decrypt key bundle: %w", err)
+			continue
+		}
+
+		bundle, err := protocol.DeserializeKeyBundle(bundleBytes)
+		if err != nil {
+			lastErr = fmt.Errorf("deserialize key bundle: %w", err)
+			continue
+		}
+
+		log.Printf("[transport] bootstrap success: gen=%d, tickets=%d",
+			bundle.BundleGen, len(bundle.SessionTickets))
+
+		return bundle, nil
 	}
 
-	timestampMs := uint64(time.Now().UnixMilli())
-
-	// Compute bootstrap proof
-	proof := protocol.ComputeBootstrapProof(t.keys.BootstrapKey, bootNonce, timestampMs)
-
-	// Build payload: boot_nonce(16) + timestamp_ms(8) + bootstrap_proof(16) + capabilities(4)
-	payload := make([]byte, 16+8+16+4)
-	copy(payload[0:16], bootNonce)
-	binary.BigEndian.PutUint64(payload[16:24], timestampMs)
-	copy(payload[24:40], proof)
-	binary.BigEndian.PutUint32(payload[40:44], 0x03) // capabilities: ICMP + TCP probe
-
-	// Build header
-	prefix := t.session.GetClientIDPrefix()
-	header := &protocol.Header{
-		Ver:            protocol.ProtocolVersion,
-		MsgType:        protocol.MsgBootstrapReq,
-		Flags:          0,
-		ClientIDPrefix: prefix,
-		BundleGen:      0,
-		TicketID:       0,
-		Seq:            0,
-		PayloadLen:     uint32(len(payload)),
-		HeaderMAC:      0,
-	}
-
-	// Send request
-	respData, err := t.sendRequest(ctx, header, payload)
-	if err != nil {
-		return nil, fmt.Errorf("bootstrap request: %w", err)
-	}
-
-	// Parse response
-	respHeader, err := protocol.DecodeHeader(respData)
-	if err != nil {
-		return nil, fmt.Errorf("decode bootstrap resp header: %w", err)
-	}
-
-	if respHeader.MsgType == protocol.MsgErrorResp {
-		errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
-		return nil, fmt.Errorf("bootstrap error: %s", errResp.Error())
-	}
-
-	if respHeader.MsgType != protocol.MsgBootstrapResp {
-		return nil, fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
-	}
-
-	respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
-
-	// Parse: server_time_ms(8) + bundle_gen(8) + nonce(12) + ciphertext
-	if len(respPayload) < 28 {
-		return nil, fmt.Errorf("bootstrap response payload too short")
-	}
-
-	// serverTimeMs := binary.BigEndian.Uint64(respPayload[0:8])
-	bundleGen := binary.BigEndian.Uint64(respPayload[8:16])
-	nonce := respPayload[16:28]
-	ciphertext := respPayload[28:]
-
-	// Build AAD for decryption (response header with correct fields)
-	aadHeader := &protocol.Header{
-		Ver:            protocol.ProtocolVersion,
-		MsgType:        protocol.MsgBootstrapResp,
-		Flags:          0,
-		ClientIDPrefix: respHeader.ClientIDPrefix,
-		BundleGen:      bundleGen,
-		TicketID:       0,
-		Seq:            0,
-		PayloadLen:     0,
-		HeaderMAC:      0,
-	}
-	aad := protocol.EncodeHeader(aadHeader)
-
-	// Decrypt KeyBundle
-	bundleBytes, err := protocol.AEADDecrypt(t.keys.BundleWrapKey, nonce, ciphertext, aad)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt key bundle: %w", err)
-	}
-
-	bundle, err := protocol.DeserializeKeyBundle(bundleBytes)
-	if err != nil {
-		return nil, fmt.Errorf("deserialize key bundle: %w", err)
-	}
-
-	log.Printf("[transport] bootstrap success: gen=%d, tickets=%d",
-		bundle.BundleGen, len(bundle.SessionTickets))
-
-	return bundle, nil
+	return nil, fmt.Errorf("bootstrap failed after %d attempts: %w", maxRetries, lastErr)
 }
 
 // Query sends an encrypted DNS query through the Worker.
@@ -186,63 +212,83 @@ func (t *Transport) Query(ctx context.Context, dnsQuery []byte) ([]byte, error) 
 
 	header.PayloadLen = uint32(payloadLen)
 
-	// Send request
-	respData, err := t.sendRequest(ctx, header, payload)
-	if err != nil {
-		return nil, fmt.Errorf("query request: %w", err)
+	// Retry logic for queries: up to 2 attempts
+	const maxRetries = 2
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			log.Printf("[transport] query retry attempt %d", attempt)
+			select {
+			case <-time.After(500 * time.Millisecond):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		// Send request
+		respData, err := t.sendRequest(ctx, header, payload)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Parse response
+		respHeader, err := protocol.DecodeHeader(respData)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if respHeader.MsgType == protocol.MsgErrorResp {
+			errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
+			lastErr = fmt.Errorf("query error: %s", errResp.Error())
+			continue
+		}
+
+		if respHeader.MsgType != protocol.MsgQueryResp {
+			lastErr = fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
+			continue
+		}
+
+		respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
+
+		// Parse: resolver_id(1) + transport_flags(1) + upstream_rtt_ms(2) + nonce(12) + ciphertext
+		if len(respPayload) < 16 {
+			lastErr = fmt.Errorf("query response payload too short")
+			continue
+		}
+
+		respNonce := respPayload[4:16]
+		respCiphertext := respPayload[16:]
+
+		// Build AAD for decryption
+		respAadHeader := &protocol.Header{
+			Ver:            protocol.ProtocolVersion,
+			MsgType:        protocol.MsgQueryResp,
+			Flags:          0,
+			ClientIDPrefix: respHeader.ClientIDPrefix,
+			BundleGen:      respHeader.BundleGen,
+			TicketID:       respHeader.TicketID,
+			Seq:            respHeader.Seq,
+			PayloadLen:     0,
+			HeaderMAC:      0,
+		}
+		respAad := protocol.EncodeHeader(respAadHeader)
+
+		// Decrypt DNS response
+		dnsResp, err := protocol.AEADDecrypt(
+			ticketInfo.QueryKeys.RespKey, respNonce, respCiphertext, respAad,
+		)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		return dnsResp, nil
 	}
 
-	// Parse response
-	respHeader, err := protocol.DecodeHeader(respData)
-	if err != nil {
-		return nil, fmt.Errorf("decode query resp header: %w", err)
-	}
-
-	if respHeader.MsgType == protocol.MsgErrorResp {
-		errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
-		return nil, fmt.Errorf("query error: %s", errResp.Error())
-	}
-
-	if respHeader.MsgType != protocol.MsgQueryResp {
-		return nil, fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
-	}
-
-	respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
-
-	// Parse: resolver_id(1) + transport_flags(1) + upstream_rtt_ms(2) + nonce(12) + ciphertext
-	if len(respPayload) < 16 {
-		return nil, fmt.Errorf("query response payload too short")
-	}
-
-	// resolverId := respPayload[0]
-	// transportFlags := respPayload[1]
-	// upstreamRttMs := binary.BigEndian.Uint16(respPayload[2:4])
-	respNonce := respPayload[4:16]
-	respCiphertext := respPayload[16:]
-
-	// Build AAD for decryption
-	respAadHeader := &protocol.Header{
-		Ver:            protocol.ProtocolVersion,
-		MsgType:        protocol.MsgQueryResp,
-		Flags:          0,
-		ClientIDPrefix: respHeader.ClientIDPrefix,
-		BundleGen:      respHeader.BundleGen,
-		TicketID:       respHeader.TicketID,
-		Seq:            respHeader.Seq,
-		PayloadLen:     0,
-		HeaderMAC:      0,
-	}
-	respAad := protocol.EncodeHeader(respAadHeader)
-
-	// Decrypt DNS response
-	dnsResp, err := protocol.AEADDecrypt(
-		ticketInfo.QueryKeys.RespKey, respNonce, respCiphertext, respAad,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt dns response: %w", err)
-	}
-
-	return dnsResp, nil
+	return nil, fmt.Errorf("query failed after %d attempts: %w", maxRetries+1, lastErr)
 }
 
 // Refresh performs a bundle refresh with the Worker, with retry logic.
