@@ -6,6 +6,17 @@ on:
     tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Build target'
+        required: true
+        default: 'docker'
+        type: choice
+        options:
+          - docker
+          - worker
+          - both
 
 env:
   REGISTRY: ghcr.io
@@ -31,7 +42,9 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     needs: paths-filter
-    if: needs.paths-filter.outputs.docker == 'true'
+    if: >-
+      needs.paths-filter.outputs.docker == 'true' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.target == 'docker' || inputs.target == 'both'))
     permissions:
       contents: read
       packages: write
@@ -79,7 +92,9 @@ jobs:
   typecheck-worker:
     runs-on: ubuntu-latest
     needs: paths-filter
-    if: needs.paths-filter.outputs.worker == 'true'
+    if: >-
+      needs.paths-filter.outputs.worker == 'true' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.target == 'worker' || inputs.target == 'both'))
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -105,7 +120,9 @@ jobs:
   build-docker-binary:
     runs-on: ubuntu-latest
     needs: paths-filter
-    if: needs.paths-filter.outputs.docker == 'true'
+    if: >-
+      needs.paths-filter.outputs.docker == 'true' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.target == 'docker' || inputs.target == 'both'))
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
