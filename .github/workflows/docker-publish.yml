@@ -4,16 +4,25 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    paths:
-      - 'docker/**'
-      - 'worker/**'
-      - '.github/workflows/docker-publish.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'docker/**'
-      - 'worker/**'
-      - '.github/workflows/docker-publish.yml'
+
+# Filter to avoid unnecessary builds
+paths-filter:
+  runs-on: ubuntu-latest
+  outputs:
+    docker: ${{ steps.filter.outputs.docker }}
+    worker: ${{ steps.filter.outputs.worker }}
+  steps:
+    - uses: actions/checkout@v4
+    - uses: dorny/paths-filter@v2
+      id: filter
+      with:
+        filters: |
+          docker:
+            - 'docker/**'
+          worker:
+            - 'worker/**'
 
 env:
   REGISTRY: ghcr.io
@@ -22,6 +31,8 @@ env:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    needs: paths-filter
+    if: needs.paths-filter.outputs.docker == 'true'
     permissions:
       contents: read
       packages: write
@@ -68,6 +79,8 @@ jobs:
 
   typecheck-worker:
     runs-on: ubuntu-latest
+    needs: paths-filter
+    if: needs.paths-filter.outputs.worker == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -92,6 +105,8 @@ jobs:
 
   build-docker-binary:
     runs-on: ubuntu-latest
+    needs: paths-filter
+    if: needs.paths-filter.outputs.docker == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
