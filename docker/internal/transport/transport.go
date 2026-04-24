@@ -231,7 +231,7 @@ func (t *Transport) Query(ctx context.Context, dnsQuery []byte) ([]byte, error) 
 
 	if respHeader.MsgType == protocol.MsgErrorResp {
 		errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
-		return nil, fmt.Errorf("query error: %s", errResp.Error())
+		return nil, errResp
 	}
 
 	if respHeader.MsgType != protocol.MsgQueryResp {
@@ -355,6 +355,11 @@ func (t *Transport) Refresh(ctx context.Context) (*protocol.KeyBundle, error) {
 
 		if respHeader.MsgType == protocol.MsgErrorResp {
 			errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
+			// If the error indicates session is invalid, return immediately without retry
+			if errResp.NeedsRebootstrap() {
+				log.Printf("[transport] refresh failed with fatal session error: %s", errResp)
+				return nil, errResp
+			}
 			lastErr = fmt.Errorf("refresh error: %s", errResp.Error())
 			log.Printf("[transport] refresh error response attempt %d: %v", attempt+1, lastErr)
 			continue
@@ -433,6 +438,16 @@ func (t *Transport) sendRequest(ctx context.Context, header *protocol.Header, pa
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	// Check HTTP status code
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyPreview := make([]byte, 256)
+		n, _ := resp.Body.Read(bodyPreview)
+		if n > 0 {
+			return nil, fmt.Errorf("worker returned HTTP %d: %s", resp.StatusCode, string(bodyPreview[:n]))
+		}
+		return nil, fmt.Errorf("worker returned HTTP %d", resp.StatusCode)
+	}
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

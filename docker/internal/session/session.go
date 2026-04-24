@@ -7,20 +7,22 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/neon9809/trusted-dns/docker/internal/protocol"
 )
 
 // Manager handles the session state for the Docker node.
 type Manager struct {
-	mu          sync.RWMutex
-	bundle      *protocol.KeyBundle
-	keys        *protocol.DerivedKeys
-	clientID    []byte
-	queryKeys   []*protocol.QueryKeys // one per session ticket
-	seqCounters []uint32              // current seq for each ticket
-	totalQueries uint32               // total queries across all tickets
-	currentSlot  int32                // current ticket slot (atomic)
+	mu                   sync.RWMutex
+	bundle               *protocol.KeyBundle
+	keys                 *protocol.DerivedKeys
+	clientID             []byte
+	queryKeys            []*protocol.QueryKeys // one per session ticket
+	seqCounters          []uint32              // current seq for each ticket
+	totalQueries         uint32                // total queries across all tickets
+	currentSlot          int32                 // current ticket slot (atomic)
+	rebootstrapTriggered atomic.Int64          // timestamp when re-bootstrap was triggered (UnixNano, 0 = not triggered)
 }
 
 // New creates a new session manager.
@@ -50,6 +52,9 @@ func (m *Manager) SetBundle(bundle *protocol.KeyBundle) error {
 		m.queryKeys[i] = qk
 		m.seqCounters[i] = ticket.CounterBase
 	}
+
+	// Cancel any pending re-bootstrap countdown since we have a valid bundle now
+	m.rebootstrapTriggered.Store(0)
 
 	log.Printf("[session] installed bundle gen=%d with %d tickets, budget=%d",
 		bundle.BundleGen, len(bundle.SessionTickets), bundle.Policy.QueriesPerBundle)
@@ -141,6 +146,13 @@ func (m *Manager) NeedsRefresh() bool {
 	return needs
 }
 
+// HasBundle returns true if there's an active bundle.
+func (m *Manager) HasBundle() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.bundle != nil
+}
+
 // GetRefreshTicket returns the refresh ticket for the current bundle.
 func (m *Manager) GetRefreshTicket() *protocol.RefreshTicket {
 	m.mu.RLock()
@@ -171,4 +183,76 @@ func (m *Manager) GetClientIDPrefix() [8]byte {
 // GetClientID returns the full client ID.
 func (m *Manager) GetClientID() []byte {
 	return m.clientID
+}
+
+// ClearBundle clears the current bundle, forcing a re-bootstrap.
+// This should be called when the Worker rejects tickets (ERR_BAD_TICKET).
+func (m *Manager) ClearBundle() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.bundle = nil
+	m.queryKeys = nil
+	m.seqCounters = nil
+	m.totalQueries = 0
+	atomic.StoreInt32(&m.currentSlot, 0)
+
+	log.Println("[session] bundle cleared, re-bootstrap required")
+}
+
+// TriggerRebootstrap schedules a re-bootstrap after 1 minute delay.
+// Returns true if this is the first trigger, false if already triggered.
+// Multiple concurrent calls will only trigger one re-bootstrap countdown.
+func (m *Manager) TriggerRebootstrap() bool {
+	// Check if already triggered
+	currentTrigger := m.rebootstrapTriggered.Load()
+	if currentTrigger != 0 {
+		return false // Already triggered
+	}
+
+	// Try to set the trigger timestamp (atomic CAS)
+	triggeredAt := time.Now().UnixNano()
+	if !m.rebootstrapTriggered.CompareAndSwap(0, triggeredAt) {
+		return false // Another goroutine triggered it first
+	}
+
+	log.Printf("[session] re-bootstrap countdown started (1 minute delay)")
+	return true
+}
+
+// ShouldRebootstrap checks if the 1-minute countdown has elapsed and re-bootstrap should proceed.
+// Returns true if countdown elapsed and this call won the race to perform re-bootstrap.
+// Uses atomic CAS to ensure only one goroutine can win the race.
+func (m *Manager) ShouldRebootstrap() bool {
+	triggeredAt := m.rebootstrapTriggered.Load()
+	if triggeredAt == 0 {
+		return false // Not triggered
+	}
+
+	// Check if 1 minute has elapsed
+	elapsed := time.Since(time.Unix(0, triggeredAt))
+	if elapsed < time.Minute {
+		remaining := time.Minute - elapsed
+		log.Printf("[session] re-bootstrap countdown: %v remaining", remaining.Round(time.Second))
+		return false
+	}
+
+	// Atomically try to claim the re-bootstrap right
+	// Only one goroutine will succeed in this CAS and return true
+	if !m.rebootstrapTriggered.CompareAndSwap(triggeredAt, 0) {
+		// Another goroutine already claimed it
+		log.Println("[session] re-bootstrap already claimed by another goroutine")
+		return false
+	}
+
+	return true
+}
+
+// CancelRebootstrap cancels a pending re-bootstrap countdown.
+func (m *Manager) CancelRebootstrap() {
+	triggeredAt := m.rebootstrapTriggered.Load()
+	if triggeredAt != 0 {
+		m.rebootstrapTriggered.Store(0)
+		log.Println("[session] re-bootstrap countdown cancelled")
+	}
 }

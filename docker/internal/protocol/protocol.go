@@ -253,6 +253,17 @@ func (e *ErrorResponse) Error() string {
 	return fmt.Sprintf("protocol error 0x%02x: %s", e.Code, e.Detail)
 }
 
+// NeedsRebootstrap returns true if the error indicates the session is invalid
+// and requires a fresh bootstrap.
+func (e *ErrorResponse) NeedsRebootstrap() bool {
+	switch e.Code {
+	case ErrBadTicket, ErrExpired, ErrOldGeneration, ErrReplaySuspect:
+		return true
+	default:
+		return false
+	}
+}
+
 // ParseErrorResponse extracts error info from an ERROR_RESP payload.
 func ParseErrorResponse(payload []byte) *ErrorResponse {
 	if len(payload) < 1 {

@@ -5,11 +5,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -82,25 +84,75 @@ func main() {
 	}
 	rw := rewriter.New(rewriterConfig, probeEngine)
 
+	// refreshInProgress is an atomic flag to prevent concurrent refresh operations
+	var refreshInProgress atomic.Bool
+
 	// DNS query handler
 	handler := func(ctx context.Context, query []byte) ([]byte, error) {
+		// Auto-recover if bundle is missing (cleared due to error)
+		if !sess.HasBundle() {
+			// Check if re-bootstrap countdown has been triggered
+			if !sess.ShouldRebootstrap() {
+				// Trigger countdown if not already
+				sess.TriggerRebootstrap()
+				return nil, fmt.Errorf("re-bootstrap countdown in progress")
+			}
+
+			// Countdown elapsed, but double-check if bundle was set by another goroutine
+			if sess.HasBundle() {
+				log.Println("[main] bundle already set by another goroutine, skipping re-bootstrap")
+				sess.CancelRebootstrap()
+			} else {
+				// Still no bundle, perform re-bootstrap
+				log.Println("[main] starting re-bootstrap after countdown...")
+				bundle, err := trans.Bootstrap(ctx)
+				if err != nil {
+					// Re-trigger countdown for next attempt
+					sess.TriggerRebootstrap()
+					return nil, fmt.Errorf("re-bootstrap failed: %w", err)
+				}
+				if err := sess.SetBundle(bundle); err != nil {
+					return nil, fmt.Errorf("set bundle failed: %w", err)
+				}
+				log.Printf("[main] re-bootstrap complete: gen=%d", bundle.BundleGen)
+			}
+		}
+
 		// Check if refresh is needed
 		if sess.NeedsRefresh() {
-			go func() {
-				newBundle, err := trans.Refresh(context.Background())
-				if err != nil {
-					log.Printf("[main] refresh failed: %v", err)
-					return
-				}
-				if err := sess.SetBundle(newBundle); err != nil {
-					log.Printf("[main] set new bundle failed: %v", err)
-				}
-			}()
+			// Use atomic CompareAndSwap to ensure only one refresh goroutine runs at a time
+			if refreshInProgress.CompareAndSwap(false, true) {
+				go func() {
+					defer refreshInProgress.Store(false)
+					newBundle, err := trans.Refresh(context.Background())
+					if err != nil {
+						// Check if session is invalid
+						var protoErr *protocol.ErrorResponse
+						if errors.As(err, &protoErr) && protoErr.NeedsRebootstrap() {
+							log.Printf("[main] refresh failed with session error, clearing bundle for re-bootstrap")
+							sess.ClearBundle()
+						} else {
+							log.Printf("[main] refresh failed: %v", err)
+						}
+						return
+					}
+					if err := sess.SetBundle(newBundle); err != nil {
+						log.Printf("[main] set new bundle failed: %v", err)
+					}
+				}()
+			}
 		}
 
 		// Send query through Worker
 		resp, err := trans.Query(ctx, query)
 		if err != nil {
+			// Check if error requires re-bootstrap
+			var protoErr *protocol.ErrorResponse
+			if errors.As(err, &protoErr) && protoErr.NeedsRebootstrap() {
+				log.Printf("[main] fatal session error (%s), clearing bundle for re-bootstrap", protoErr)
+				sess.ClearBundle()
+				return nil, fmt.Errorf("session error: %w", protoErr)
+			}
 			return nil, fmt.Errorf("query via worker: %w", err)
 		}
 
@@ -147,10 +199,68 @@ func refreshLoop(ctx context.Context, sess *session.Manager, trans *transport.Tr
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Auto-recover if bundle was cleared
+			if !sess.HasBundle() {
+				// Check if countdown is in progress or should trigger
+				if sess.ShouldRebootstrap() {
+					// Countdown elapsed, but double-check if bundle was set by another goroutine
+					if sess.HasBundle() {
+						log.Println("[main] bundle already set by another goroutine, skipping proactive re-bootstrap")
+						sess.CancelRebootstrap()
+						continue
+					}
+
+					// Still no bundle, perform re-bootstrap
+					log.Println("[main] proactive re-bootstrap triggered (no bundle, countdown elapsed)")
+					bundle, err := trans.Bootstrap(ctx)
+					if err != nil {
+						consecutiveFailures++
+						log.Printf("[main] proactive re-bootstrap failed (attempt %d/%d): %v",
+							consecutiveFailures, maxConsecutiveFailures, err)
+						if consecutiveFailures >= maxConsecutiveFailures {
+							log.Printf("[main] FATAL: re-bootstrap failed %d consecutive times, initiating container restart...",
+								maxConsecutiveFailures)
+							os.Exit(1)
+						}
+						// Re-trigger countdown for next attempt
+						sess.TriggerRebootstrap()
+						continue
+					}
+					if err := sess.SetBundle(bundle); err != nil {
+						log.Printf("[main] set bundle failed: %v", err)
+						continue
+					}
+					consecutiveFailures = 0
+					log.Printf("[main] proactive re-bootstrap complete: gen=%d", bundle.BundleGen)
+					continue
+				} else {
+					// Trigger or continue countdown
+					sess.TriggerRebootstrap()
+					continue
+				}
+			}
+
 			if sess.NeedsRefresh() {
 				log.Println("[main] proactive refresh triggered")
 				newBundle, err := trans.Refresh(ctx)
 				if err != nil {
+					// Check if session is invalid
+					var protoErr *protocol.ErrorResponse
+					if errors.As(err, &protoErr) && protoErr.NeedsRebootstrap() {
+						log.Printf("[main] refresh failed with session error, clearing bundle for re-bootstrap")
+						sess.ClearBundle()
+						// IMPORTANT: Count this as a failure - worker may be having issues
+						consecutiveFailures++
+						log.Printf("[main] session error (attempt %d/%d): %v",
+							consecutiveFailures, maxConsecutiveFailures, protoErr)
+						if consecutiveFailures >= maxConsecutiveFailures {
+							log.Printf("[main] FATAL: session errors %d consecutive times, initiating container restart...",
+								maxConsecutiveFailures)
+							os.Exit(1)
+						}
+						continue
+					}
+
 					consecutiveFailures++
 					log.Printf("[main] proactive refresh failed (attempt %d/%d): %v",
 						consecutiveFailures, maxConsecutiveFailures, err)
