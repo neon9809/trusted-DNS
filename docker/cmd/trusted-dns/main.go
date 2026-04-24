@@ -53,7 +53,7 @@ func main() {
 	sess := session.New(keys, clientID)
 
 	// Initialize transport
-	trans := transport.New(config.WorkerURL, sess, keys)
+	trans := transport.New(config.WorkerURL, config.ProtocolPath, sess, keys)
 
 	// Bootstrap
 	ctx := context.Background()
@@ -181,6 +181,7 @@ func refreshLoop(ctx context.Context, sess *session.Manager, trans *transport.Tr
 type Config struct {
 	WorkerURL        string
 	RootSeed         string
+	ProtocolPath     string
 	ListenAddr       string
 	ProbeMode        string
 	TicketsPerBundle int
@@ -210,10 +211,16 @@ func loadConfig() (*Config, error) {
 		probeMode = "tcp443"
 	}
 
+	protocolPath := os.Getenv("PROTOCOL_PATH")
+	if protocolPath == "" {
+		protocolPath = "/dns-query"
+	}
+
 	return &Config{
-		WorkerURL:  workerURL,
-		RootSeed:   rootSeed,
-		ListenAddr: listenAddr,
-		ProbeMode:  probeMode,
+		WorkerURL:    workerURL,
+		ProtocolPath: protocolPath,
+		RootSeed:     rootSeed,
+		ListenAddr:   listenAddr,
+		ProbeMode:    probeMode,
 	}, nil
 }
