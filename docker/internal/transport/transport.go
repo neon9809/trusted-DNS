@@ -217,83 +217,60 @@ func (t *Transport) Query(ctx context.Context, dnsQuery []byte) ([]byte, error) 
 
 	header.PayloadLen = uint32(payloadLen)
 
-	// Retry logic for queries: up to 2 attempts
-	const maxRetries = 2
-	var lastErr error
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			log.Printf("[transport] query retry attempt %d", attempt)
-			select {
-			case <-time.After(500 * time.Millisecond):
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
-
-		// Send request
-		respData, err := t.sendRequest(ctx, header, payload)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		// Parse response
-		respHeader, err := protocol.DecodeHeader(respData)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		if respHeader.MsgType == protocol.MsgErrorResp {
-			errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
-			lastErr = fmt.Errorf("query error: %s", errResp.Error())
-			continue
-		}
-
-		if respHeader.MsgType != protocol.MsgQueryResp {
-			lastErr = fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
-			continue
-		}
-
-		respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
-
-		// Parse: resolver_id(1) + transport_flags(1) + upstream_rtt_ms(2) + nonce(12) + ciphertext
-		if len(respPayload) < 16 {
-			lastErr = fmt.Errorf("query response payload too short")
-			continue
-		}
-
-		respNonce := respPayload[4:16]
-		respCiphertext := respPayload[16:]
-
-		// Build AAD for decryption
-		respAadHeader := &protocol.Header{
-			Ver:            protocol.ProtocolVersion,
-			MsgType:        protocol.MsgQueryResp,
-			Flags:          0,
-			ClientIDPrefix: respHeader.ClientIDPrefix,
-			BundleGen:      respHeader.BundleGen,
-			TicketID:       respHeader.TicketID,
-			Seq:            respHeader.Seq,
-			PayloadLen:     0,
-			HeaderMAC:      0,
-		}
-		respAad := protocol.EncodeHeader(respAadHeader)
-
-		// Decrypt DNS response
-		dnsResp, err := protocol.AEADDecrypt(
-			ticketInfo.QueryKeys.RespKey, respNonce, respCiphertext, respAad,
-		)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		return dnsResp, nil
+	// Send request (no retry - each query must use unique seq to avoid replay detection)
+	respData, err := t.sendRequest(ctx, header, payload)
+	if err != nil {
+		return nil, fmt.Errorf("send query: %w", err)
 	}
 
-	return nil, fmt.Errorf("query failed after %d attempts: %w", maxRetries+1, lastErr)
+	// Parse response
+	respHeader, err := protocol.DecodeHeader(respData)
+	if err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	if respHeader.MsgType == protocol.MsgErrorResp {
+		errResp := protocol.ParseErrorResponse(respData[protocol.HeaderSize:])
+		return nil, fmt.Errorf("query error: %s", errResp.Error())
+	}
+
+	if respHeader.MsgType != protocol.MsgQueryResp {
+		return nil, fmt.Errorf("unexpected response type: 0x%02x", respHeader.MsgType)
+	}
+
+	respPayload := respData[protocol.HeaderSize : protocol.HeaderSize+respHeader.PayloadLen]
+
+	// Parse: resolver_id(1) + transport_flags(1) + upstream_rtt_ms(2) + nonce(12) + ciphertext
+	if len(respPayload) < 16 {
+		return nil, fmt.Errorf("query response payload too short")
+	}
+
+	respNonce := respPayload[4:16]
+	respCiphertext := respPayload[16:]
+
+	// Build AAD for decryption
+	respAadHeader := &protocol.Header{
+		Ver:            protocol.ProtocolVersion,
+		MsgType:        protocol.MsgQueryResp,
+		Flags:          0,
+		ClientIDPrefix: respHeader.ClientIDPrefix,
+		BundleGen:      respHeader.BundleGen,
+		TicketID:       respHeader.TicketID,
+		Seq:            respHeader.Seq,
+		PayloadLen:     0,
+		HeaderMAC:      0,
+	}
+	respAad := protocol.EncodeHeader(respAadHeader)
+
+	// Decrypt DNS response
+	dnsResp, err := protocol.AEADDecrypt(
+		ticketInfo.QueryKeys.RespKey, respNonce, respCiphertext, respAad,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt response: %w", err)
+	}
+
+	return dnsResp, nil
 }
 
 // Refresh performs a bundle refresh with the Worker, with retry logic.
