@@ -68,8 +68,8 @@ Docker                          Worker                      DoH Upstream
   │                               │  Anti-replay check         │
   │                               │  Decrypt DNS query         │
   │                               │  Forward via DoH           │
-  │                               │────────────────────────────>│
-  │                               │<────────────────────────────│
+  │                               │───────────────────────────>│
+  │                               │<───────────────────────────│
   │                               │  Encrypt DNS response      │
   │  QueryResp                    │                            │
   │  (encrypted DNS response)     │                            │
