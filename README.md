@@ -9,34 +9,34 @@
 Trusted-DNS adopts a **Cloudflare Worker + Local Docker Node** dual-side architecture. The Docker node takes over the local `53/UDP` port, encrypts DNS queries using a compact binary protocol, and sends them to the Worker over HTTPS. The Worker validates tickets, manages generation state, and forwards standard DNS wire-format queries to DoH upstreams per [RFC 8484](https://datatracker.ietf.org/doc/html/rfc8484).
 
 ```text
-┌─────────────────────────────┐
-│        LAN / Host Clients    │
+┌──────────────────────────────┐
+│      LAN / Host Clients      │
 │   Phones, Browsers, Stubs    │
-└──────────────┬──────────────┘
+└──────────────┬───────────────┘
                │ Standard DNS (53/UDP)
                ▼
-┌─────────────────────────────┐
+┌──────────────────────────────┐
 │      Trusted-DNS Docker      │
 │  DNS Listener                │
 │  Session Manager             │
 │  Secure Transport            │
 │  Probe Engine                │
 │  Response Rewriter           │
-└──────────────┬──────────────┘
+└──────────────┬───────────────┘
                │ HTTPS + Binary Ciphertext
                ▼
-┌─────────────────────────────┐
+┌──────────────────────────────┐
 │     Trusted-DNS Worker       │
 │  Bootstrap / Query / Refresh │
 │  Ticket Verifier             │
 │  Generation State Store      │
-└──────────────┬──────────────┘
+└──────────────┬───────────────┘
                │ DoH (HTTP POST)
                ▼
-┌─────────────────────────────┐
-│      DoH Upstream Resolvers  │
+┌──────────────────────────────┐
+│     DoH Upstream Resolvers   │
 │   Google / Cloudflare / etc  │
-└─────────────────────────────┘
+└──────────────────────────────┘
 ```
 
 ## Features
