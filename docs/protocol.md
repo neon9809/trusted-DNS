@@ -1,10 +1,12 @@
 # Trusted-DNS Protocol Specification
 
-**Version**: 1 (0x01)
+**Version**: 1 (0x01) -> 1.1 (0x01 with flags)
 
 ## Overview
 
 The Trusted-DNS protocol is a compact binary protocol designed for encrypted DNS query relay between a Docker node and a Cloudflare Worker. It operates over HTTPS (POST) with `Content-Type: application/octet-stream`.
+
+To evade DPI (Deep Packet Inspection) fingerprinting and traffic shaping, version 1.1 introduces **Payload Padding**. Random padding can be appended to the end of the ciphertext in Request payloads.
 
 All multi-byte integers are encoded in **big-endian** (network byte order).
 
@@ -26,13 +28,35 @@ Every message consists of a **32-byte fixed header** followed by a **variable-le
 |---|---|---|---|
 | 0 | 1 | `ver` | Protocol version (0x01) |
 | 1 | 1 | `msg_type` | Message type identifier |
-| 2 | 2 | `flags` | Reserved flags |
+| 2 | 2 | `flags` | Bit 0: HAS_PADDING (0x01) |
 | 4 | 8 | `client_id_prefix` | First 8 bytes of client_id |
 | 12 | 8 | `bundle_gen` | KeyBundle generation number |
 | 20 | 2 | `ticket_id` | Session ticket identifier |
 | 22 | 4 | `seq` | Sequence number |
-| 26 | 4 | `payload_len` | Payload length in bytes |
+| 26 | 4 | `payload_len` | Payload length in bytes (includes padding and padding length byte) |
 | 30 | 2 | `header_mac` | Header integrity check (reserved) |
+
+### Padding Mechanism (v1.1)
+
+If the `HAS_PADDING` flag (0x01) is set in the `flags` field, the payload structure is modified to include random padding at the end.
+
+The last 2 bytes of the payload represent the `padding_len` (uint16, big-endian). The padding data itself immediately precedes these 2 bytes.
+
+**Padded Payload Structure:**
+```text
+┌──────────────────────────────────────────────────┐
+│              Original Payload Data               │
+├──────────────────────────────────────────────────┤
+│              Random Padding (var bytes)          │
+├──────────────────────────────────────────────────┤
+│           Padding Length (2 bytes, uint16)       │
+└──────────────────────────────────────────────────┘
+```
+
+When decoding, if `HAS_PADDING` is set:
+1. Read the last 2 bytes of the payload as `padding_len`.
+2. The actual payload data length is `total_payload_len - padding_len - 2`.
+3. The padding data is discarded.
 
 ### Message Types
 

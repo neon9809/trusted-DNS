@@ -14,6 +14,7 @@ import {
   decodeRefreshTicket,
   HEADER_SIZE,
   PROTOCOL_VERSION,
+  FLAG_HAS_PADDING,
   MSG_BOOTSTRAP_REQ,
   MSG_BOOTSTRAP_RESP,
   MSG_QUERY_REQ,
@@ -241,16 +242,34 @@ async function handleQuery(
   const keys = await deriveAllKeys(rootSeed);
   const clientId = await deriveClientId(rootSeed);
 
-  // Parse query payload: ticket_blob(114) + nonce(12) + ciphertext(var)
+  // Parse query payload: ticket_blob(114) + nonce(12) + ciphertext(var) [+ padding(var) + padding_len(2) if FLAG_HAS_PADDING]
   if (payload.length < SESSION_TICKET_SIZE + NONCE_SIZE + 1) {
     return binaryResponse(
       buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TICKET),
     );
   }
 
+  // Handle Padding (v1.1)
+  let actualPayloadLen = payload.length;
+  if ((header.flags & FLAG_HAS_PADDING) !== 0) {
+    if (payload.length < SESSION_TICKET_SIZE + NONCE_SIZE + 1 + 2) {
+      return binaryResponse(
+        buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TYPE),
+      );
+    }
+    const padLenDv = new DataView(payload.buffer, payload.byteOffset + payload.length - 2, 2);
+    const padLen = padLenDv.getUint16(0, false);
+    actualPayloadLen = payload.length - padLen - 2;
+    if (actualPayloadLen < SESSION_TICKET_SIZE + NONCE_SIZE + 1) {
+      return binaryResponse(
+        buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TYPE),
+      );
+    }
+  }
+
   const ticketBlob = payload.slice(0, SESSION_TICKET_SIZE);
   const nonce = payload.slice(SESSION_TICKET_SIZE, SESSION_TICKET_SIZE + NONCE_SIZE);
-  const ciphertext = payload.slice(SESSION_TICKET_SIZE + NONCE_SIZE);
+  const ciphertext = payload.slice(SESSION_TICKET_SIZE + NONCE_SIZE, actualPayloadLen);
 
   // Decode and verify ticket
   const ticket = decodeSessionTicket(ticketBlob);

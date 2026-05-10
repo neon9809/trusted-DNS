@@ -8,6 +8,9 @@
 // ─── Protocol Version ───────────────────────────────────────────────
 export const PROTOCOL_VERSION = 0x01;
 
+// ─── Protocol Flags ─────────────────────────────────────────────────
+export const FLAG_HAS_PADDING = 0x0001;
+
 // ─── Message Types ──────────────────────────────────────────────────
 export const MSG_BOOTSTRAP_REQ  = 0x01;
 export const MSG_BOOTSTRAP_RESP = 0x02;

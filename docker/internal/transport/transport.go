@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -31,11 +32,29 @@ func New(workerURL string, protocolPath string, sess *session.Manager, keys *pro
 	if protocolPath == "" {
 		protocolPath = "/dns-query"
 	}
+	
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second, // Crucial: don't wait forever for headers (mitigates GFW drop)
+	}
+
 	return &Transport{
 		workerURL:    workerURL,
 		protocolPath: protocolPath,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Transport: transport,
+			Timeout:   15 * time.Second, // Reduced from 30s to fail faster
 		},
 		session: sess,
 		keys:    keys,
@@ -186,7 +205,7 @@ func (t *Transport) Query(ctx context.Context, dnsQuery []byte) ([]byte, error) 
 	header := &protocol.Header{
 		Ver:            protocol.ProtocolVersion,
 		MsgType:        protocol.MsgQueryReq,
-		Flags:          0,
+		Flags:          protocol.FlagHasPadding,
 		ClientIDPrefix: prefix,
 		BundleGen:      bundle.BundleGen,
 		TicketID:       ticketInfo.Ticket.TicketID,
@@ -206,14 +225,26 @@ func (t *Transport) Query(ctx context.Context, dnsQuery []byte) ([]byte, error) 
 		return nil, fmt.Errorf("encrypt dns query: %w", err)
 	}
 
-	// Build payload: ticket_blob(114) + nonce(12) + ciphertext
+	// Generate random padding (e.g., 64 to 256 bytes) to evade DPI
+	padLenInt, err := protocol.RandomBytes(1)
+	var padLen uint16
+	if err == nil {
+		padLen = uint16(padLenInt[0]) + 64 // 64 to 319 bytes
+	} else {
+		padLen = 128
+	}
+	padding, _ := protocol.RandomBytes(int(padLen))
+
+	// Build payload: ticket_blob(114) + nonce(12) + ciphertext + padding(var) + padding_len(2)
 	ticketBlob := protocol.EncodeSessionTicket(ticketInfo.Ticket)
-	payloadLen := len(ticketBlob) + len(nonce) + len(ciphertext)
+	payloadLen := len(ticketBlob) + len(nonce) + len(ciphertext) + int(padLen) + 2
 	payload := make([]byte, payloadLen)
 	off := 0
 	copy(payload[off:], ticketBlob); off += len(ticketBlob)
 	copy(payload[off:], nonce); off += len(nonce)
-	copy(payload[off:], ciphertext)
+	copy(payload[off:], ciphertext); off += len(ciphertext)
+	copy(payload[off:], padding); off += int(padLen)
+	binary.BigEndian.PutUint16(payload[off:], padLen)
 
 	header.PayloadLen = uint32(payloadLen)
 
@@ -432,6 +463,10 @@ func (t *Transport) sendRequest(ctx context.Context, header *protocol.Header, pa
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	// Add common headers to mimic browser traffic and avoid DPI length signature
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {

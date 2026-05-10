@@ -11,6 +11,11 @@ import (
 // Protocol version
 const ProtocolVersion = 0x01
 
+// Protocol flags
+const (
+	FlagHasPadding = 0x0001
+)
+
 // Message types
 const (
 	MsgBootstrapReq  = 0x01
