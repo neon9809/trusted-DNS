@@ -58,8 +58,9 @@ func main() {
 	trans := transport.New(config.WorkerURL, config.ProtocolPath, sess, keys)
 
 	// Bootstrap
-	ctx := context.Background()
-	bundle, err := trans.Bootstrap(ctx)
+	bootCtx, bootCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer bootCancel()
+	bundle, err := trans.Bootstrap(bootCtx)
 	if err != nil {
 		log.Fatalf("[main] bootstrap failed: %v", err)
 	}
@@ -105,7 +106,9 @@ func main() {
 			} else {
 				// Still no bundle, perform re-bootstrap
 				log.Println("[main] starting re-bootstrap after countdown...")
-				bundle, err := trans.Bootstrap(ctx)
+				rebootCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				bundle, err := trans.Bootstrap(rebootCtx)
+				cancel()
 				if err != nil {
 					// Re-trigger countdown for next attempt
 					sess.TriggerRebootstrap()
@@ -124,7 +127,9 @@ func main() {
 			if refreshInProgress.CompareAndSwap(false, true) {
 				go func() {
 					defer refreshInProgress.Store(false)
-					newBundle, err := trans.Refresh(context.Background())
+					refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					newBundle, err := trans.Refresh(refreshCtx)
 					if err != nil {
 						// Check if session is invalid
 						var protoErr *protocol.ErrorResponse
