@@ -62,7 +62,7 @@ Docker                          Worker                      DoH Upstream
   │                               │                            │
   │  QueryReq                     │                            │
   │  (ticket_blob + encrypted     │                            │
-  │   DNS query)                  │                            │
+  │   DNS query + padding)        │                            │
   │──────────────────────────────>│                            │
   │                               │  Verify ticket             │
   │                               │  Anti-replay check         │
@@ -120,9 +120,12 @@ The Worker uses a "Primary + Secondary Race, Tertiary Fallback" strategy:
 
 This provides both low latency (via racing) and high availability (via fallback).
 
-### Probe Engine
+### Resilient Transport & DPI Evasion (v1.1)
 
-The Docker node optionally probes A/AAAA record addresses via TCP connection tests. Results are used to reorder DNS response records so that the most reachable address appears first. This improves connection quality without fabricating DNS answers.
+To circumvent Deep Packet Inspection (DPI) and traffic shaping algorithms commonly deployed by ISPs:
+1. **Dynamic Payload Padding**: The Docker node injects 64-319 bytes of cryptographically secure random padding to the end of the `QueryReq` payload, preventing fixed-length packet fingerprinting.
+2. **HTTP Header Masquerading**: The transport injects standard `User-Agent` and `Accept` headers to blend in with regular web traffic.
+3. **Strict Timeout Handling**: Explicit timeouts (e.g., 5-second `ResponseHeaderTimeout` and 30-second handshake contexts) prevent the Docker node from deadlocking on silent DPI packet drops (half-open connections).
 
 ## Deployment Model
 

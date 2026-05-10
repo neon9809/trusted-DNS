@@ -41,13 +41,15 @@ Trusted-DNS adopts a **Cloudflare Worker + Local Docker Node** dual-side archite
 
 ## Features
 
-**Security and Privacy**
+**Security & Privacy**
 
+- **DPI Evasion (v1.1)**: Random payload padding and HTTP header masquerading to bypass Deep Packet Inspection and traffic shaping.
 - Encrypted Docker-to-Worker communication using AES-256-GCM with HKDF-derived purpose-specific keys
 - Ticket-based session management with generation rotation (no persistent session tables)
 - Short-window anti-replay protection with sequence number validation
 - Zero DNS query history: no QNAME, QTYPE, or answer content is ever persisted
 - Minimal state: only `client_id → latest_bundle_gen` is stored per client
+- Resilient Transport: Explicit context timeouts and strict connection constraints to prevent half-open drops.
 
 **Performance**
 

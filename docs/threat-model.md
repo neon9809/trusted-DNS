@@ -54,13 +54,13 @@ Trusted-DNS is designed to **reduce the most direct and realistic DNS pollution 
 
 **Residual Risk**: If all configured upstreams are compromised or return identical poisoned responses, the Docker node will relay the poisoned response to clients.
 
-### T7: Traffic Analysis
+### T7: Traffic Analysis & DPI Fingerprinting
 
-**Description**: An observer analyzes traffic patterns (timing, size, frequency) to infer DNS query behavior.
+**Description**: An observer or Deep Packet Inspection (DPI) firewall analyzes traffic patterns (timing, size, frequency, HTTP headers) to infer DNS query behavior or block unrecognized encrypted tunnels via silent packet drops.
 
-**Mitigation**: Limited. The binary protocol has relatively fixed overhead, but query timing and response sizes can still leak information about the queried domains.
+**Mitigation (v1.1)**: The protocol implements **Dynamic Payload Padding**. Random bytes (64-319 bytes) are appended to the encrypted payload in the `QueryReq` message, masking the true size of the DNS query and breaking fixed length signatures. Additionally, standard browser headers (User-Agent, Accept) are injected into the HTTP POST request. Explicit Context Timeouts (5s for headers) are implemented to quickly recover from DPI silent drops.
 
-**Residual Risk**: Traffic analysis is explicitly out of scope for this version. Future versions may consider padding or traffic shaping.
+**Residual Risk**: While v1.1 effectively evades basic DPI size signatures and half-open connection traps, advanced timing analysis or machine-learning-based traffic classification could still potentially identify the tunnel over long periods of observation.
 
 ### T8: Root Seed Compromise
 
@@ -88,10 +88,9 @@ Trusted-DNS is designed to **reduce the most direct and realistic DNS pollution 
 The following are explicitly **not** goals of Trusted-DNS v1:
 
 - **DNSSEC validation**: The system relays DNS responses as-is from upstreams
-- **Traffic analysis resistance**: No padding or traffic shaping is implemented
 - **Multi-user support**: The system is designed for single-user or single-household deployment
 - **Anonymity**: The Worker operator can observe all DNS queries
-- **Censorship circumvention**: The system does not attempt to bypass IP-level blocking
+- **Absolute Unobservability**: While basic DPI padding is present, it does not guarantee nation-state-level traffic analysis resistance
 
 ## Recommendations
 
