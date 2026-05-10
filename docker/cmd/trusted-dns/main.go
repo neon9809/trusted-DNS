@@ -57,8 +57,12 @@ func main() {
 	// Initialize transport
 	trans := transport.New(config.WorkerURL, config.ProtocolPath, sess, keys)
 
+	// Create root context for background tasks
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	defer rootCancel()
+
 	// Bootstrap
-	bootCtx, bootCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	bootCtx, bootCancel := context.WithTimeout(rootCtx, 30*time.Second)
 	defer bootCancel()
 	bundle, err := trans.Bootstrap(bootCtx)
 	if err != nil {
@@ -178,7 +182,7 @@ func main() {
 		config.WorkerURL, listenAddr)
 
 	// Start background refresh ticker
-	go refreshLoop(ctx, sess, trans)
+	go refreshLoop(rootCtx, sess, trans)
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -217,7 +221,9 @@ func refreshLoop(ctx context.Context, sess *session.Manager, trans *transport.Tr
 
 					// Still no bundle, perform re-bootstrap
 					log.Println("[main] proactive re-bootstrap triggered (no bundle, countdown elapsed)")
-					bundle, err := trans.Bootstrap(ctx)
+					rebootCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+					bundle, err := trans.Bootstrap(rebootCtx)
+					cancel()
 					if err != nil {
 						consecutiveFailures++
 						log.Printf("[main] proactive re-bootstrap failed (attempt %d/%d): %v",
