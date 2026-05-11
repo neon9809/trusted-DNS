@@ -68,13 +68,20 @@ v2 中 Worker 会先基于请求 header 的 `client_id_prefix` 进行 client 路
 
 - Worker 使用 `client_id_prefix`（8 bytes）作为路由 key
 - key 的计算方式为：`deriveClientId(root_seed).slice(0, 8)`
-- 若找不到匹配的 client，则 Bootstrap / Query / Refresh 会返回错误响应
+- 若找不到匹配的 client，则 Bootstrap / Query / Refresh 会返回错误响应（当前实现返回 `ERR_BAD_TICKET`）
 
 ## 6. 注意事项
 
 - `CLIENT_REGISTRY` 中的 `root_seed` 属于敏感信息，不应写入代码仓库
 - registry 仅用于路由与密钥派生，不应扩展为控制平面或状态数据库
 - generation 状态仍然由 Durable Object 按 `client_id` 维度保存，保持最小状态模型不变
+
+## 6.1 配置错误语义（建议按此理解）
+
+- `CLIENT_REGISTRY` 存在但 JSON 解析失败：不会产生任何有效 client，所有请求都会命中“未知 client”错误
+- `CLIENT_REGISTRY` 不是 JSON 数组：同上
+- 某条 entry 缺失/不合法（例如 `root_seed` 不是 64 位 hex）：该 entry 会被忽略
+- 多条 entry 派生出相同 `client_id_prefix`：以列表中更靠前的 entry 为准，后续重复项被忽略
 
 ## 7. 本地冒烟验证
 

@@ -139,3 +139,18 @@ docker run --rm \
 - Query 需要 DoH 上游可用。若你的环境无法访问公网 DoH，可用本地 DoH mock：
   - `worker/scripts/doh-mock-server.js`
   - 并在 `DOH_UPSTREAMS` 中配置 `http://127.0.0.1:8053/dns-query`（仅用于本地开发验证）
+
+## 12. 一键跑完（本地 smoke suite）
+
+如果你已经在 `worker/.dev.vars` 中配置好 `CLIENT_REGISTRY` / `DOH_UPSTREAMS` 等变量，可以用一个命令启动 DoH mock + Worker，并依次跑完三段冒烟脚本：
+
+- [run-smoke-suite.js](file:///workspace/worker/scripts/run-smoke-suite.js)
+
+示例：
+
+```bash
+cd worker
+SEED_A='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
+SEED_B='abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' \
+node scripts/run-smoke-suite.js
+```

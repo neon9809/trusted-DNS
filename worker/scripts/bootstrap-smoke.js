@@ -135,13 +135,13 @@ async function main() {
   const a1 = await bootstrapOnce(workerUrl, seedA);
   const b1 = await bootstrapOnce(workerUrl, seedB);
   const a2 = await bootstrapOnce(workerUrl, seedA);
+  const b2 = await bootstrapOnce(workerUrl, seedB);
 
-  console.log(JSON.stringify({ a1, b1, a2 }, null, 2));
+  console.log(JSON.stringify({ a1, b1, a2, b2 }, null, 2));
 
   if (a1.client_id_prefix === b1.client_id_prefix) throw new Error('prefix collision');
-  if (a1.bundle_gen !== '1') throw new Error(`expected a1.gen=1 got ${a1.bundle_gen}`);
-  if (b1.bundle_gen !== '1') throw new Error(`expected b1.gen=1 got ${b1.bundle_gen}`);
-  if (a2.bundle_gen !== '2') throw new Error(`expected a2.gen=2 got ${a2.bundle_gen}`);
+  if (BigInt(a2.bundle_gen) !== BigInt(a1.bundle_gen) + 1n) throw new Error('A generation did not advance by 1');
+  if (BigInt(b2.bundle_gen) !== BigInt(b1.bundle_gen) + 1n) throw new Error('B generation did not advance by 1');
   console.log('ok');
 }
 

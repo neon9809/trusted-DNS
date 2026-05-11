@@ -12,15 +12,20 @@ type ClientRegistryEntry = {
   enabled?: boolean;
 };
 
+function isValidRootSeedHex(value: string) {
+  return /^[0-9a-fA-F]{64}$/.test(value);
+}
+
 function normalizeEntry(
   entry: ClientRegistryEntry,
   defaults: Omit<ClientConfig, 'rootSeedHex'>,
 ): ClientConfig | null {
   const rootSeedHex = entry.rootSeedHex || entry.root_seed;
   if (!rootSeedHex) return null;
+  if (!isValidRootSeedHex(rootSeedHex)) return null;
 
   return {
-    rootSeedHex,
+    rootSeedHex: rootSeedHex.toLowerCase(),
     dohUpstreams: entry.dohUpstreams || entry.doh_upstreams || defaults.dohUpstreams,
     dohTimeoutMs: entry.dohTimeoutMs ?? entry.doh_timeout_ms ?? defaults.dohTimeoutMs,
   };
@@ -55,9 +60,13 @@ async function buildRegistry(
     if (e && e.enabled === false) continue;
     const cfg = normalizeEntry(e, defaults);
     if (!cfg) continue;
-    const clientId = await deriveClientId(hexToBytes(cfg.rootSeedHex));
-    const key = bytesToHex(clientId.slice(0, 8));
-    if (!reg.has(key)) reg.set(key, cfg);
+    try {
+      const clientId = await deriveClientId(hexToBytes(cfg.rootSeedHex));
+      const key = bytesToHex(clientId.slice(0, 8));
+      if (!reg.has(key)) reg.set(key, cfg);
+    } catch {
+      continue;
+    }
   }
 
   return reg;
@@ -89,4 +98,3 @@ export function createCloudflareClientSelector(env: CloudflareEnv): ClientSelect
     },
   };
 }
-
