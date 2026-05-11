@@ -359,34 +359,33 @@ v2 允许的核心持久状态依然非常少：
 建议的代码布局如下：
 
 ```text
-worker/
-  core/
-    protocol/
-    crypto/
-    tickets/
-    service/
-    interfaces/
-  adapters/
-    cloudflare/
-    deno/
-    fastly/
+platform/
+  worker/
+    src/
+      core/
+      adapters/
+    wrangler.toml
+  deno/
+  fastly/
 ```
 
 说明：
 
-- `core/` 用于放平台无关逻辑
-- `adapters/` 用于放状态与运行时适配
+- `platform/worker/src/core/` 用于放平台无关逻辑
+- `platform/worker/src/adapters/` 用于放状态与运行时适配
 
 如果后续仍需保留各平台独立入口，也可使用：
 
 ```text
-worker/
-  core/
-  adapters/
-  platforms/
+platform/
+  worker/
+    src/
+    wrangler.toml
+  deno/
+  fastly/
 ```
 
-其中 `platforms/` 专门用于放入口文件与部署配置。
+其中 `platform/` 作为各运行时实现的顶层目录，便于在 v2.1 继续加入 Deno / Fastly 入口与部署配置。
 
 ## 13. 三个平台在 v2 中的角色分工
 

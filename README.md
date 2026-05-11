@@ -158,15 +158,15 @@ but they still consume ticket/query budget and can still lead to a refresh.
 
 **Option A: One-Click Deploy (Recommended)**
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/neon9809/trusted-DNS/tree/main/worker)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/neon9809/trusted-DNS/tree/main/platform/worker)
 
 *Note: You will be prompted to enter a `ROOT_SEED` during deployment. Generate one using `openssl rand -hex 32`.*
 
 **Option B: Manual Deploy**
 
 ```bash
-cd worker
-cp ../examples/worker.env.example .env
+cd platform/worker
+cp ../../examples/worker.env.example .env
 
 # Edit wrangler.toml with your ROOT_SEED and DoH upstreams
 pnpm install
@@ -293,18 +293,19 @@ Trusted-DNS/
 │   ├── architecture.md
 │   ├── protocol.md
 │   └── threat-model.md
-├── worker/
-│   ├── src/
-│   │   ├── index.ts          # Worker entry point
-│   │   ├── handlers.ts       # Bootstrap/Query/Refresh handlers
-│   │   ├── protocol.ts       # Binary protocol definitions
-│   │   ├── crypto.ts         # HKDF, AEAD, HMAC utilities
-│   │   ├── tickets.ts        # Ticket issuance and verification
-│   │   ├── resolver.ts       # DoH upstream resolver
-│   │   ├── replay.ts         # Anti-replay cache
-│   │   └── generation-store.ts # Durable Object for gen state
-│   ├── wrangler.toml
-│   └── package.json
+├── platform/
+│   └── worker/
+│       ├── src/
+│       │   ├── index.ts          # Worker entry point
+│       │   ├── handlers.ts       # Bootstrap/Query/Refresh handlers
+│       │   ├── protocol.ts       # Binary protocol definitions
+│       │   ├── crypto.ts         # HKDF, AEAD, HMAC utilities
+│       │   ├── tickets.ts        # Ticket issuance and verification
+│       │   ├── resolver.ts       # DoH upstream resolver
+│       │   ├── replay.ts         # Anti-replay cache
+│       │   └── generation-store.ts # Durable Object for gen state
+│       ├── wrangler.toml
+│       └── package.json
 ├── docker/
 │   ├── cmd/trusted-dns/
 │   │   └── main.go           # Docker node entry point

@@ -26,12 +26,12 @@
 
 仓库提供一个小工具用于计算 `client_id` 与 `client_id_prefix`：
 
-- [print-client-prefix.js](file:///workspace/worker/scripts/print-client-prefix.js)
+- [print-client-prefix.js](file:///workspace/platform/worker/scripts/print-client-prefix.js)
 
 示例：
 
 ```bash
-cd worker
+cd platform/worker
 node scripts/print-client-prefix.js "$SEED_A"
 node scripts/print-client-prefix.js "$SEED_B"
 ```
@@ -58,10 +58,10 @@ node scripts/print-client-prefix.js "$SEED_B"
 
 ## 6. 启动 Worker（本地开发）
 
-在 `worker/` 目录启动本地 Worker：
+在 `platform/worker/` 目录启动本地 Worker：
 
 ```bash
-cd worker
+cd platform/worker
 export DOH_UPSTREAMS='["https://cloudflare-dns.com/dns-query"]'
 export DOH_TIMEOUT_MS='5000'
 export CLIENT_REGISTRY='[{"root_seed":"'"$SEED_A"'","enabled":true},{"root_seed":"'"$SEED_B"'","enabled":true}]'
@@ -130,26 +130,26 @@ docker run --rm \
 
 如果你只想验证“多 client 路由 + generation 隔离 + 端到端加密链路”而不启动 Docker，可以使用仓库内的脚本：
 
-- Bootstrap：`worker/scripts/bootstrap-smoke.js`
-- Query：`worker/scripts/query-smoke.js`
-- Refresh：`worker/scripts/refresh-smoke.js`
+- Bootstrap：`platform/worker/scripts/bootstrap-smoke.js`
+- Query：`platform/worker/scripts/query-smoke.js`
+- Refresh：`platform/worker/scripts/refresh-smoke.js`
 
 说明：
 
 - Query 需要 DoH 上游可用。若你的环境无法访问公网 DoH，可用本地 DoH mock：
-  - `worker/scripts/doh-mock-server.js`
+  - `platform/worker/scripts/doh-mock-server.js`
   - 并在 `DOH_UPSTREAMS` 中配置 `http://127.0.0.1:8053/dns-query`（仅用于本地开发验证）
 
 ## 12. 一键跑完（本地 smoke suite）
 
-如果你已经在 `worker/.dev.vars` 中配置好 `CLIENT_REGISTRY` / `DOH_UPSTREAMS` 等变量，可以用一个命令启动 DoH mock + Worker，并依次跑完三段冒烟脚本：
+如果你已经在 `platform/worker/.dev.vars` 中配置好 `CLIENT_REGISTRY` / `DOH_UPSTREAMS` 等变量，可以用一个命令启动 DoH mock + Worker，并依次跑完三段冒烟脚本：
 
-- [run-smoke-suite.js](file:///workspace/worker/scripts/run-smoke-suite.js)
+- [run-smoke-suite.js](file:///workspace/platform/worker/scripts/run-smoke-suite.js)
 
 示例：
 
 ```bash
-cd worker
+cd platform/worker
 SEED_A='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
 SEED_B='abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' \
 node scripts/run-smoke-suite.js

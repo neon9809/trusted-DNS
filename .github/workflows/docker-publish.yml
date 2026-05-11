@@ -37,7 +37,7 @@ jobs:
             docker:
               - 'docker/**'
             worker:
-              - 'worker/**'
+              - 'platform/worker/**'
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -111,11 +111,11 @@ jobs:
           version: 10
 
       - name: Install dependencies
-        working-directory: ./worker
+        working-directory: ./platform/worker
         run: pnpm install
 
       - name: Type check
-        working-directory: ./worker
+        working-directory: ./platform/worker
         run: pnpm typecheck
 
   build-docker-binary:
