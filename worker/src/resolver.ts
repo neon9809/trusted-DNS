@@ -121,14 +121,24 @@ export function parseUpstreams(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.filter((u: unknown) => typeof u === 'string' && u.startsWith('https://'));
+      return parsed.filter((u: unknown) =>
+        typeof u === 'string' && (
+          u.startsWith('https://') ||
+          u.startsWith('http://127.0.0.1') ||
+          u.startsWith('http://localhost')
+        ),
+      );
     }
   } catch {
     // Try comma-separated
     return raw
       .split(',')
       .map((s) => s.trim())
-      .filter((s) => s.startsWith('https://'));
+      .filter((s) =>
+        s.startsWith('https://') ||
+        s.startsWith('http://127.0.0.1') ||
+        s.startsWith('http://localhost'),
+      );
   }
   return [];
 }

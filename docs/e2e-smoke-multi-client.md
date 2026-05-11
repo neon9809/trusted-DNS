@@ -125,3 +125,17 @@ docker run --rm \
 ## 10. 结论
 
 当你能用两个不同 seed 的 Docker client 同时指向同一个 Worker 且均可正常 bootstrap/query/refresh，同时 generation 互不影响时，即完成多 client registry 的端到端冒烟验证。
+
+## 11. 纯脚本化冒烟（无需 Docker）
+
+如果你只想验证“多 client 路由 + generation 隔离 + 端到端加密链路”而不启动 Docker，可以使用仓库内的脚本：
+
+- Bootstrap：`worker/scripts/bootstrap-smoke.js`
+- Query：`worker/scripts/query-smoke.js`
+- Refresh：`worker/scripts/refresh-smoke.js`
+
+说明：
+
+- Query 需要 DoH 上游可用。若你的环境无法访问公网 DoH，可用本地 DoH mock：
+  - `worker/scripts/doh-mock-server.js`
+  - 并在 `DOH_UPSTREAMS` 中配置 `http://127.0.0.1:8053/dns-query`（仅用于本地开发验证）
