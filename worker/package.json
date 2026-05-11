@@ -18,6 +18,15 @@
       },
       "DOH_UPSTREAMS": {
         "description": "JSON array of DoH upstream resolver URLs. Default: Google + Cloudflare."
+      },
+      "DOH_TIMEOUT_MS": {
+        "description": "DNS upstream timeout in milliseconds. Default: 5000."
+      },
+      "PROTOCOL_PATH": {
+        "description": "Binary protocol HTTP path. Default: /dns-query."
+      },
+      "CLIENT_REGISTRY": {
+        "description": "Optional JSON array string for multi-client routing. Each entry provides a root_seed and optional per-client upstream settings."
       }
     }
   },
