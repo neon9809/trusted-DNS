@@ -47,7 +47,6 @@ import {
   aeadDecrypt,
   verifyBootstrapProof,
   hexToBytes,
-  bytesToHex,
 } from './crypto';
 
 import {
@@ -60,17 +59,16 @@ import {
 
 import { resolve, parseUpstreams, ResolverConfig } from './resolver';
 import { AntiReplayCache } from './replay';
+import type { CloudflareEnv } from './adapters/cloudflare/env';
+import {
+  advanceGenerationState,
+  getGenerationState,
+  markGenerationUsed,
+} from './adapters/cloudflare/generation-store';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
-export interface Env {
-  ROOT_SEED: string;
-  DOH_UPSTREAMS: string;
-  GENERATION_STORE: DurableObjectNamespace;
-  DOH_TIMEOUT_MS?: string;
-  DEBUG_MODE?: string;
-  PROTOCOL_PATH?: string;  // Custom path for the protocol endpoint (default: /dns-query)
-}
+export type Env = CloudflareEnv;
 
 // Global anti-replay cache (per Worker isolate)
 const replayCache = new AntiReplayCache(8192, 120_000);
@@ -172,19 +170,12 @@ async function handleBootstrap(
   }
 
   // Get current generation from Durable Object
-  const doId = env.GENERATION_STORE.idFromName(bytesToHex(clientId));
-  const doStub = env.GENERATION_STORE.get(doId);
-  const genResp = await doStub.fetch(new Request('https://do/get'));
-  const genState = await genResp.json() as { latestBundleGen: number };
+  const genState = await getGenerationState(env, clientId);
 
   const newGen = BigInt(genState.latestBundleGen + 1);
 
   // Advance generation
-  await doStub.fetch(new Request('https://do/advance', {
-    method: 'POST',
-    body: JSON.stringify({ newGen: Number(newGen) }),
-    headers: { 'Content-Type': 'application/json' },
-  }));
+  await advanceGenerationState(env, clientId, Number(newGen));
 
   // Issue KeyBundle
   const bundle = await issueKeyBundle(
@@ -276,10 +267,7 @@ async function handleQuery(
   const nowMs = BigInt(Date.now());
 
   // Check generation against Durable Object
-  const doId = env.GENERATION_STORE.idFromName(bytesToHex(clientId));
-  const doStub = env.GENERATION_STORE.get(doId);
-  const genResp = await doStub.fetch(new Request('https://do/get'));
-  const genState = await genResp.json() as { latestBundleGen: number };
+  const genState = await getGenerationState(env, clientId);
 
   if (Number(ticket.bundleGen) < genState.latestBundleGen) {
     return binaryResponse(
@@ -313,11 +301,7 @@ async function handleQuery(
   }
 
   // Mark generation as used
-  await doStub.fetch(new Request('https://do/mark-used', {
-    method: 'POST',
-    body: JSON.stringify({ gen: Number(ticket.bundleGen) }),
-    headers: { 'Content-Type': 'application/json' },
-  }));
+  await markGenerationUsed(env, clientId, Number(ticket.bundleGen));
 
   // Derive query keys from resume_seed
   const queryKeys = await deriveQueryKeys(ticket.resumeSeed);
@@ -436,10 +420,7 @@ async function handleRefresh(
   const nowMs = BigInt(Date.now());
 
   // Check generation
-  const doId = env.GENERATION_STORE.idFromName(bytesToHex(clientId));
-  const doStub = env.GENERATION_STORE.get(doId);
-  const genResp = await doStub.fetch(new Request('https://do/get'));
-  const genState = await genResp.json() as { latestBundleGen: number };
+  const genState = await getGenerationState(env, clientId);
 
   // CRITICAL: Verify ticket BEFORE advancing generation
   // The ticket was created with the current generation, so we must verify
@@ -457,11 +438,7 @@ async function handleRefresh(
 
   // Only advance generation AFTER successful verification
   const newGen = currentGen + 1n;
-  await doStub.fetch(new Request('https://do/advance', {
-    method: 'POST',
-    body: JSON.stringify({ newGen: Number(newGen) }),
-    headers: { 'Content-Type': 'application/json' },
-  }));
+  await advanceGenerationState(env, clientId, Number(newGen));
 
   // Issue new KeyBundle
   const bundle = await issueKeyBundle(
