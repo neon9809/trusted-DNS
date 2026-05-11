@@ -125,6 +125,26 @@ $ dig @127.0.0.1 gmail.com MX +short
 
 所有记录类型（A、AAAA、MX）均正确解析。响应重排器还对多记录应答进行了重排，以提升实际连接质量。
 
+## 日志解读
+
+Docker 节点不会为每一次 DNS 查询都打印一条 `rewriter` 日志。
+`[rewriter] reordered N records` 只会在某一次 DNS 响应中包含多个
+A/AAAA 应答记录，并且重排器完成探测与重排后才打印。它**不是**
+“处理了 N 次查询”的意思，也不能拿来当作会话刷新阈值的计数器。
+
+| 查询 / 响应形态 | 是否消耗一次 query budget / ticket sequence | 是否打印 `[rewriter] reordered N records` | 说明 |
+|---|---|---|---|
+| 只有一个 IP 的 A 或 AAAA 响应 | 是 | 否 | 请求仍然会经过 Worker，并消耗一次查询序号，但没有可重排的地址。 |
+| 包含多个 IP 的 A 或 AAAA 响应 | 是 | 通常会 | 探测引擎会对返回地址做排序，重排器会为这一次响应打印一条日志，其中 `N` 是被重排的应答记录数。 |
+| MX / CNAME / TXT / 其他非 A/AAAA 应答 | 是 | 否 | 这些请求同样会消耗查询额度，但重排器只处理 A/AAAA 地址排序。 |
+| 没有 answer 的 DNS 响应 | 是 | 否 | 只要请求已经通过 Worker 发出，即使响应为空，也会消耗一次查询序号。 |
+| 由于 `totalQueries >= threshold` 触发 refresh | 日志本身不会额外消耗新查询 | 否 | Refresh 走的是独立的 refresh 请求。触发依据是内部 `totalQueries` 计数，而不是你能看到的 `rewriter` 日志条数。 |
+| 由于 `approaching expiration` 触发 refresh | 日志本身不会额外消耗新查询 | 否 | 即使你只看到很少几条 `rewriter` 日志，也可能因为 bundle 即将过期而触发 refresh。时间阈值与查询条数是独立判断的。 |
+
+简而言之，如果只盯着 `docker logs` 里的 `rewriter` 行，通常会明显低估
+真实 DNS 请求量。很多成功查询不会打印 `rewriter` 日志，但它们依然会
+消耗 ticket/query 额度，也依然可能推动会话进入 refresh。
+
 ## 快速开始
 
 ### 前置要求

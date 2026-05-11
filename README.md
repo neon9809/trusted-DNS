@@ -125,6 +125,27 @@ $ dig @127.0.0.1 gmail.com MX +short
 
 All record types (A, AAAA, MX) resolved correctly. The response rewriter also reordered multi-record answers for improved connection quality.
 
+## Log Interpretation
+
+The Docker node does not print one `rewriter` log per DNS query. The line
+`[rewriter] reordered N records` is emitted only when a single DNS response
+contains multiple A/AAAA answers and the rewriter finishes probing and
+reordering them. It does **not** mean "N queries were processed", and it is
+not a counter for when session refresh will happen.
+
+| Query / response shape | Consumes one query budget / ticket sequence? | Prints `[rewriter] reordered N records`? | Notes |
+|---|---|---|---|
+| A or AAAA response with only one IP | Yes | No | The request still goes through the Worker and uses one query sequence, but there is nothing to reorder. |
+| A or AAAA response with multiple IPs | Yes | Usually yes | The probe engine ranks the returned addresses and the rewriter logs one line for that response, where `N` is the number of reordered answer records. |
+| MX / CNAME / TXT / other non-A/AAAA answers | Yes | No | These requests still consume query budget, but the rewriter only handles A/AAAA address ordering. |
+| DNS response with no answers | Yes | No | An empty response still consumes a query sequence if it was sent through the Worker. |
+| Refresh triggered by `totalQueries >= threshold` | No new query is consumed by the log itself | No | Refresh uses a separate refresh request. The trigger is based on the internal `totalQueries` counter, not the visible number of `rewriter` log lines. |
+| Refresh triggered by `approaching expiration` | No new query is consumed by the log itself | No | Refresh can happen even if you saw only a few `rewriter` lines, because bundle expiry time is checked independently from query count. |
+
+In short, `docker logs` will usually undercount real DNS traffic if you only
+look at `rewriter` lines. Many successful queries never print a rewriter log,
+but they still consume ticket/query budget and can still lead to a refresh.
+
 ## Quick Start
 
 ### Prerequisites
