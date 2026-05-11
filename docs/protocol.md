@@ -138,7 +138,7 @@ Ticket tags are computed as the first 16 bytes of HMAC-SHA256 over the ticket da
 | 48 | 8 | `not_after_ms` | Validity end (Unix ms) |
 | 56 | 2 | `rotate_after_queries` | Trigger refresh after N queries |
 | 58 | 16 | `refresh_nonce` | Random nonce for refresh |
-| 74 | 32 | `refresh_seed` | Seed for refresh proof |
+| 74 | 32 | `refresh_seed` | Seed for refresh proof / future refresh attestation |
 | 106 | 16 | `refresh_tag` | HMAC-SHA256 truncated tag |
 
 ## KeyBundle Structure
@@ -221,3 +221,15 @@ A KeyBundle is issued during Bootstrap or Refresh and contains:
 | 166 | 1 | `requested_reason` |
 
 **Response payload**: Same format as Bootstrap response.
+
+#### Current v1 Enforcement Semantics
+
+The Refresh request intentionally carries `spent_bundle_gen`, `spent_query_count`, and `refresh_proof` for forward compatibility with a future **multi-client Worker** mode.
+
+In the current v1 implementation:
+
+1. `refresh_ticket_blob` is the authoritative refresh credential
+2. The Worker parses the `spent_*` fields and `refresh_proof` for wire compatibility
+3. The Worker does **not** yet make refresh acceptance depend on independently validating the forward-compatible attestation fields
+
+This keeps the protocol layout stable while reserving space for a stricter future refresh attestation model.

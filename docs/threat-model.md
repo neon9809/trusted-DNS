@@ -4,6 +4,8 @@
 
 Trusted-DNS is designed to **reduce the most direct and realistic DNS pollution and tampering risks** in environments where the local ISP performs active DNS injection or modification. It is **not** designed to achieve absolute unobservability or resist nation-state-level traffic analysis.
 
+The current v1 deployment model assumes **one Docker node paired with one Worker deployment**. The Worker derives one active client namespace from its configured `root_seed`. Fields reserved for future multi-client refresh attestation are present in the protocol, but they are not yet treated as a separate primary security boundary in v1.
+
 ## Threat Categories
 
 ### T1: Local DNS Pollution (Primary Threat)
@@ -89,6 +91,7 @@ The following are explicitly **not** goals of Trusted-DNS v1:
 
 - **DNSSEC validation**: The system relays DNS responses as-is from upstreams
 - **Multi-user support**: The system is designed for single-user or single-household deployment
+- **Multi-client multiplexing in one Worker deployment**: v1 does not let one Worker instance independently serve multiple Docker nodes with distinct seeds
 - **Anonymity**: The Worker operator can observe all DNS queries
 - **Absolute Unobservability**: While basic DPI padding is present, it does not guarantee nation-state-level traffic analysis resistance
 
@@ -99,3 +102,4 @@ The following are explicitly **not** goals of Trusted-DNS v1:
 3. **Monitor Docker node logs** for unusual error patterns that may indicate attacks
 4. **Keep the Docker image updated** to receive security patches
 5. **Do not expose the Worker endpoint** beyond what is necessary (consider Cloudflare Access)
+6. **Use one Worker deployment plus one `root_seed` per Docker node in v1** rather than attempting multi-client sharing in a single Worker deployment

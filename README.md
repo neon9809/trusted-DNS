@@ -39,6 +39,16 @@ Trusted-DNS adopts a **Cloudflare Worker + Local Docker Node** dual-side archite
 └──────────────────────────────┘
 ```
 
+## Current Scope (v1)
+
+Trusted-DNS v1 is intentionally scoped as a **single Docker node ↔ single Worker deployment** system:
+
+- The Worker derives one stable `client_id` from its configured `ROOT_SEED`
+- The Docker node must use the same `ROOT_SEED` as that Worker deployment
+- One Worker deployment currently manages one client namespace and one generation lifecycle
+
+Fields such as `spent_bundle_gen`, `spent_query_count`, and `refresh_proof` are already present in the wire protocol for forward compatibility, but in v1 they are reserved for a future **multi-client Worker** upgrade. The current implementation treats the refresh ticket as the authoritative refresh credential.
+
 ## Features
 
 **Security & Privacy**
@@ -193,17 +203,24 @@ Point your devices' DNS settings to the Docker node's IP address. For example, i
 | `DOH_TIMEOUT_MS` | No | `5000` | Per-upstream timeout in milliseconds |
 | `PROTOCOL_PATH` | No | `/dns-query` | Custom protocol endpoint path (must match Docker) |
 
-## Multi-Node Deployment
+## Deployment Scope And Multi-Node Notes
 
-**Each Docker node must use a unique `ROOT_SEED`.** The `client_id` is deterministically derived from `ROOT_SEED` via HKDF, meaning two nodes sharing the same seed will produce the same `client_id` and map to the same Durable Object instance on the Worker. This causes the following failure cascade:
+**Trusted-DNS v1 supports one Docker node per Worker deployment.** The Worker derives exactly one active `client_id` from its configured `ROOT_SEED`, so the supported topology today is:
 
-| Stage | What happens |
+```text
+Docker Node A  <->  Worker Deployment A  (ROOT_SEED_A)
+Docker Node B  <->  Worker Deployment B  (ROOT_SEED_B)
+```
+
+The following combinations matter:
+
+| Scenario | Outcome |
 |---|---|
-| **Bootstrap** | Both nodes advance the same generation counter. The node that bootstraps second immediately invalidates the first node's KeyBundle (`ERR_OLD_GENERATION`). |
-| **Query** | Both nodes hold identical tickets derived from the same `client_id` and generation. Overlapping sequence numbers trigger the anti-replay check (`ERR_REPLAY_SUSPECTED`). |
-| **Refresh** | Both nodes race to refresh the same generation, continuously invalidating each other's bundles. |
+| **Two Docker nodes share the same `ROOT_SEED` and the same Worker** | Both nodes derive the same `client_id` and collide on bootstrap, query sequence space, and refresh generation state. |
+| **Two Docker nodes use different `ROOT_SEED`s against the same Worker deployment** | Authentication fails, because the Worker derives keys and `client_id` from its own configured `ROOT_SEED` and does not currently multiplex multiple client namespaces. |
+| **Two Docker nodes each use their own Worker deployment and their own `ROOT_SEED`** | This is the supported v1 deployment model. |
 
-The correct approach for multi-node deployments is to generate a separate `ROOT_SEED` for each node:
+If you want to run multiple nodes today, create a separate Worker deployment and `ROOT_SEED` for each node:
 
 ```bash
 # Node A
@@ -213,7 +230,7 @@ ROOT_SEED=$(openssl rand -hex 32)
 ROOT_SEED=$(openssl rand -hex 32)
 ```
 
-Each node then has an independent `client_id`, an independent Durable Object instance, and an independent ticket lifecycle — with no interference between nodes. The Worker supports an unlimited number of independent nodes simultaneously.
+Future versions may allow one Worker deployment to serve multiple clients. The refresh attestation fields already present in the protocol were kept for that upgrade path, but v1 does not enable that mode yet.
 
 ## Protocol Overview
 
@@ -227,6 +244,8 @@ Trusted-DNS uses a three-phase protocol model:
 
 Each `KeyBundle` contains **5 session tickets** (200 queries each) and **1 refresh ticket**, providing a total budget of **1000 queries per generation**. This design avoids full handshakes on the hot path while maintaining clear security semantics.
 
+In the current v1 implementation, the Refresh request carries `spent_bundle_gen`, `spent_query_count`, and `refresh_proof` as forward-compatible fields. They are reserved for a future multi-client Worker mode and are not yet enforced as standalone refresh acceptance criteria.
+
 For detailed protocol specification, see [docs/protocol.md](docs/protocol.md).
 
 ## Security Model
@@ -239,6 +258,8 @@ Trusted-DNS is designed to **reduce the most direct and realistic pollution and 
 - **Session ephemerality**: Tickets and keys reside only in memory
 - **Generation invalidation**: New bootstrap/refresh invalidates old generations
 - **Basic anti-replay**: Sequence numbers and short-window deduplication
+
+The current security boundary assumes a **single Docker node paired with a single Worker deployment**. Multi-client isolation inside one Worker deployment is explicitly deferred to a future version.
 
 For the complete threat model, see [docs/threat-model.md](docs/threat-model.md).
 
@@ -291,7 +312,7 @@ Trusted-DNS/
 | **M2** | Complete KeyBundle rotation and anti-replay |
 | **M3** | Enhanced A/AAAA probing and reordering |
 | **M4** | Upstream strategy optimization and observability |
-| **M5** | Evaluate DoT, relay, and extension capabilities |
+| **M5** | Multi-client Worker mode, refresh attestation enforcement, and extension capabilities |
 
 ## License
 
