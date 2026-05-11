@@ -137,13 +137,29 @@ func (m *Manager) NeedsRefresh() bool {
 		return true
 	}
 
+	// 1. Check if budget threshold is reached (90%)
 	threshold := uint32(float64(m.bundle.Policy.QueriesPerBundle) * 0.9)
-	needs := m.totalQueries >= threshold
-	if needs {
+	if m.totalQueries >= threshold {
 		log.Printf("[session] refresh needed: totalQueries=%d >= threshold=%d (budget=%d)",
 			m.totalQueries, threshold, m.bundle.Policy.QueriesPerBundle)
+		return true
 	}
-	return needs
+
+	// 2. Check if time threshold is reached (10 minutes before expiration)
+	now := time.Now().UnixMilli()
+	expireAt := int64(m.bundle.ExpireAtMs)
+	
+	// Refresh 10 minutes (600,000 ms) before expiration to give enough buffer
+	// against network delays and clock skew
+	timeThreshold := expireAt - 600000 
+	
+	if now >= timeThreshold {
+		log.Printf("[session] refresh needed: approaching expiration (now=%d, expireAt=%d)",
+			now, expireAt)
+		return true
+	}
+
+	return false
 }
 
 // HasBundle returns true if there's an active bundle.
