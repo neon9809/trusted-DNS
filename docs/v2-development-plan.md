@@ -1,171 +1,163 @@
-# Trusted-DNS v2 Development Plan
+# Trusted-DNS v2 开发计划
 
-## 1. Document Purpose
+## 1. 文档目的
 
-This document defines the formal development plan for Trusted-DNS v2.
+本文档用于正式定义 Trusted-DNS v2 的开发范围、设计原则、里程碑、交付顺序与验收标准。
 
-The v2 scope is intentionally limited to three platform tracks:
+v2 的范围被明确限制为以下三条平台主线：
 
-1. **Cloudflare Workers v2 multi-client support**
-2. **Deno Deploy proof of concept**
-3. **Fastly Compute proof of concept**
+1. **Cloudflare Workers v2 多 client 支持**
+2. **Deno Deploy PoC**
+3. **Fastly Compute PoC**
 
-This plan explicitly keeps the v1 design philosophy:
+本文档只作为规划与实施依据，不代表所有 v2 工作必须在同一个发布版本中一次完成。
 
-- **lightweight deployment**
-- **stateless hot path**
-- **minimal persistent state**
-- **no DNS history retention**
+## 2. v2 范围声明
 
-This document is a planning artifact only. It does not imply that all v2 work
-must be delivered in a single release.
+### 2.1 v2 要解决的问题
 
-## 2. v1 Baseline
+v1 当前采用严格的 **单 Docker 节点 <-> 单 Worker 部署** 模型。该模型在最小化状态、控制复杂度、快速部署方面是成功的，但也带来一个明确限制：
 
-Trusted-DNS v1 is built around a strict **single Docker node <-> single Worker
-deployment** model.
+- 一个 Worker 部署只能服务一个 `client_id`
+- 多个 Docker 节点无法安全复用同一个 Worker 部署
 
-Current properties:
+v2 的核心目标，就是在不破坏 v1 轻量化与无状态原则的前提下，将当前的单 client Worker 升级为多 client Worker。
 
-- one Worker deployment derives exactly one active `client_id`
-- one Docker node uses one `ROOT_SEED`
-- one Worker manages one generation namespace
-- the Worker stores only minimal generation state per client
-- the query hot path uses a compact binary protocol with no JSON overhead
-- the Worker does not maintain session tables
+### 2.2 v2 目标
 
-v1 already includes protocol fields reserved for future multi-client upgrade:
+v2 的正式目标分为两个层级：
+
+- **主目标**：实现一个 Cloudflare Worker 部署服务多个 Docker client
+- **次目标**：抽离平台无关的 Worker 核心能力，并在 Deno Deploy 与 Fastly Compute 上完成可运行的 PoC
+
+### 2.3 v2 非目标
+
+以下内容明确不在 v2 范围内：
+
+- 一次性交付所有边缘平台的生产级支持
+- 引入 Worker 侧持久化 session table
+- 引入 Docker 侧数据库、控制平面服务或额外容器
+- 将热路径协议从二进制改为 JSON
+- 存储 DNS 查询历史、QNAME、QTYPE 或解析结果
+- 支持 AWS CloudFront Functions
+- 支持 Vercel Edge Functions
+- 支持 Netlify Edge Functions
+
+## 3. v1 资产与约束
+
+v2 必须建立在 v1 已验证成功的设计资产之上，而不是推倒重来。
+
+### 3.1 v1 已验证的正确方向
+
+v1 已证明以下设计是正确且值得保留的：
+
+- Docker 侧保持极简部署模型
+- Worker 热路径使用紧凑二进制协议
+- Query 过程不依赖 Worker 持久会话表
+- Worker 仅持久化最小 generation 状态
+- Bootstrap / Query / Refresh 的三阶段模型清晰稳定
+- 票据与 generation 轮转机制天然适合无状态服务端
+
+### 3.2 v1 的关键约束
+
+当前 v1 存在以下硬约束：
+
+- Worker 从单一 `ROOT_SEED` 派生唯一 `client_id`
+- Worker 的 generation 命名空间只有一条
+- 当前 `refresh_proof` 相关字段虽已存在，但尚未作为强制校验边界生效
+
+### 3.3 v1 的协议预留点
+
+以下字段已在 v1 协议中预留，v2 必须优先复用：
 
 - `spent_bundle_gen`
 - `spent_query_count`
 - `refresh_proof`
 
-These fields must be reused in v2 rather than replaced with a new heavy control
-plane.
+这意味着 v2 的演进重点应放在 **语义补全与实现升级**，而不是贸然扩张 wire format。
 
-## 3. v2 Goals
+## 4. v2 核心原则
 
-### 3.1 Primary Goal
+### 4.1 轻量化原则
 
-Enable **one Cloudflare Worker deployment to serve multiple Docker clients**
-without violating the v1 lightweight and stateless principles.
+v2 必须继续保持“普通用户可低门槛部署”的体验：
 
-### 3.2 Secondary Goals
+- Docker 端仍保持单容器部署
+- 仍以环境变量为主配置方式
+- 不要求 Docker 侧接入外部数据库
+- 不引入复杂控制平面
 
-Build a platform-neutral Worker core that can be validated on:
+### 4.2 无状态原则
 
-- **Deno Deploy**
-- **Fastly Compute**
+v2 Worker 热路径仍必须满足以下要求：
 
-These two platforms are proof-of-concept targets in v2, not production parity
-targets on day one.
+- 不维护持久化 session table
+- 不对每次 query 进行持久化写入
+- query 验证仍以票据自验证为主
+- 仅保留最小且必要的 client 级状态
 
-### 3.3 Non-Goals
+### 4.3 最小持久状态原则
 
-The following are explicitly out of scope for v2:
+v2 的持久状态规模应与 **client 数量** 线性相关，而不能与 **query 数量**、**ticket 数量** 线性相关。
 
-- multi-platform production support delivered all at once
-- per-query persistent logs or DNS query storage
-- Worker-side session tables
-- replacing the binary protocol with JSON
-- introducing a Docker-side database or control-plane service
-- AWS CloudFront Functions support
-- Vercel Edge Functions support
-- Netlify Edge Functions support
-
-## 4. v2 Design Principles
-
-### 4.1 Lightweight First
-
-The Docker deployment model must remain simple:
-
-- one container
-- one environment-based configuration model
-- no mandatory external database on the Docker side
-- no long bootstrap sequence beyond what is already required by protocol safety
-
-### 4.2 Stateless Worker Hot Path
-
-The Worker query path must remain stateless in the same sense as v1:
-
-- no persistent session table
-- no query-by-query write amplification
-- ticket verification remains self-contained
-- only minimal client generation state is persisted
-
-### 4.3 O(1) Persistent State Per Client
-
-Persistent state growth must remain bounded by client count, not by ticket count
-or query count.
-
-Allowed persistent state examples:
+允许的持久状态示例：
 
 - `client_id -> latest_bundle_gen`
-- optional minimal client registry metadata
-- optional minimal replay-related state only if strictly necessary
+- 最小 client registry 元数据
+- 仅在必要时引入的极小 replay 辅助状态
 
-Disallowed persistent state examples:
+禁止的持久状态示例：
 
-- per-query logs
-- per-ticket lifecycle logs
-- per-client DNS traffic history
+- 每次查询的审计日志
+- ticket 生命周期明细
+- per-client DNS 请求历史
 
-### 4.4 Protocol Stability
+### 4.4 协议稳定原则
 
-v2 should preserve as much of the existing wire format as possible.
+v2 应尽量保持现有协议结构稳定：
 
-Preferred approach:
+- 先复用现有预留字段
+- 先补强语义，再扩充负载结构
+- 平台差异不得污染协议核心
 
-- reuse reserved fields already present in refresh flow
-- evolve semantics before expanding payload shapes
-- isolate platform differences outside protocol-core
+### 4.5 平台隔离原则
 
-### 4.5 Platform Isolation
+Cloudflare、Deno、Fastly 的运行时差异必须收敛在 adapter 层，不能直接渗入协议与服务流程主逻辑。
 
-Cloudflare, Deno, and Fastly specific code must not be mixed into the protocol
-or service logic.
+## 5. v2 目标架构
 
-The implementation should separate:
+v2 建议将 Worker 拆分为三层结构。
 
-- protocol logic
-- request lifecycle logic
-- state interfaces
-- runtime adapters
+### 5.1 协议核心层
 
-## 5. Target v2 Architecture
+职责：
 
-v2 should refactor the Worker into three logical layers.
+- 头部编解码
+- ticket 编解码
+- bootstrap proof 校验
+- refresh proof 校验
+- HKDF / AEAD / HMAC
+- KeyBundle 序列化与反序列化
+- 错误响应构造
 
-### 5.1 Protocol Core
+要求：
 
-Responsibilities:
+- 不依赖 Cloudflare API
+- 不依赖 Durable Objects
+- 可以被多个平台复用
 
-- header encode/decode
-- ticket encode/decode
-- bootstrap proof verification
-- refresh proof verification
-- AEAD encryption/decryption
-- HKDF key derivation
-- error response construction
+### 5.2 服务核心层
 
-Requirements:
+职责：
 
-- no Cloudflare-specific imports
-- no Durable Object assumptions
-- portable across all target platforms
+- Bootstrap 流程
+- Query 流程
+- Refresh 流程
+- client 路由与上下文构建
+- generation 迁移逻辑
+- resolver 调度
 
-### 5.2 Service Core
-
-Responsibilities:
-
-- bootstrap flow
-- query flow
-- refresh flow
-- client lookup orchestration
-- generation transition orchestration
-- resolver orchestration
-
-Dependencies must be abstract interfaces:
+建议抽象的接口：
 
 - `ClientRegistry`
 - `GenerationStore`
@@ -174,211 +166,208 @@ Dependencies must be abstract interfaces:
 - `Clock`
 - `Logger`
 
-### 5.3 Runtime Adapter Layer
+### 5.3 平台适配层
 
-Responsibilities:
+职责：
 
-- HTTP request entrypoint
-- environment and config binding
-- state backend wiring
-- platform-specific fetch/storage behavior
-- deployment descriptors
+- HTTP 入口绑定
+- 环境变量与配置读取
+- 状态后端接入
+- 平台特有 fetch / storage 行为封装
+- 平台部署配置
 
-Expected adapters:
+v2 的目标适配器：
 
 - `cloudflare`
 - `deno`
 - `fastly`
 
-## 6. Multi-Client Model
+## 6. 多 client 设计决策
 
-### 6.1 Core Decision
+### 6.1 核心结论
 
-v2 should **not** reuse one shared `ROOT_SEED` for multiple Docker clients.
+v2 不应让多个 Docker 节点共享同一个 `ROOT_SEED`。
 
-Instead:
+正确模型应为：
 
-- each Docker client retains its own independent seed material
-- the Worker holds a lightweight registry of known clients
-- request handling begins by resolving the client identity from
-  `client_id_prefix`
+- 每个 Docker client 保持自己独立的 seed 材料
+- Worker 侧维护一个轻量级 client registry
+- 请求进入后通过 `client_id_prefix` 路由到对应 client 上下文
 
-### 6.2 Why This Model
+### 6.2 采用该模型的原因
 
-This preserves the v1 security and isolation model:
+这样可以完整保留 v1 的安全边界：
 
-- each Docker node gets an independent `client_id`
-- each client gets an independent generation namespace
-- ticket and refresh validation remain client-scoped
-- client collisions are removed by design
+- 每个 Docker 节点拥有独立 `client_id`
+- 每个 client 拥有独立 generation 命名空间
+- ticket / refresh 校验天然按 client 隔离
+- 从设计上杜绝 client 碰撞
 
-### 6.3 Client Registry Requirements
+### 6.3 client registry 约束
 
-The registry must remain minimal.
+registry 必须保持极简。
 
-Required data:
+建议包含：
 
 - `client_id`
 - `client_id_prefix`
-- seed material or equivalent derivation source
-- enabled/disabled status
+- seed 材料或等价派生源
+- `enabled/disabled` 状态
 
-Optional data:
+可选元数据：
 
-- display name
-- creation time
-- notes for operator use
+- 显示名称
+- 创建时间
+- 运维备注
 
-The registry must not store:
+明确禁止存储：
 
-- query history
-- ticket issue history
-- DNS answers
+- DNS 查询内容
+- ticket 使用明细
+- DNS 响应数据
 
-### 6.4 Generation State Model
+### 6.4 generation 状态模型
 
-The v1 generation model remains valid and should be preserved:
+v1 的 generation 状态模型应继续保留：
 
-- one minimal generation record per client
-- only newest generation is authoritative
-- older generations are rejected
+- 每个 client 一条最小 generation 状态
+- 最新 generation 唯一权威
+- 旧 generation 自动失效
 
-This is a major v1 strength and should not be replaced with a heavier model.
+这是 v1 最有价值的设计资产之一，v2 不应替换为更重的模型。
 
-### 6.5 Replay Model
+### 6.5 replay 处理策略
 
-Replay handling should remain lightweight, but v2 must document platform
-semantics clearly:
+v2 应继续保持 replay 机制轻量，但必须清晰文档化平台语义：
 
-- isolate-local replay detection is acceptable as a baseline
-- stronger replay guarantees may be added only if they do not break the
-  lightweight state model
-- cross-platform semantics must be documented explicitly
+- 默认可接受 isolate-local 的短窗口 replay 防护
+- 若要增强 replay 保障，不能破坏最小状态模型
+- 不同平台的一致性差异必须明确写入文档
 
-## 7. Platform Strategy
+## 7. 平台策略
 
-## 7.1 Cloudflare Workers v2
+### 7.1 Cloudflare Workers v2
 
-Role:
+定位：
 
-- primary production platform
-- first delivery target
-- reference implementation for multi-client support
+- v2 主生产平台
+- 第一优先级交付目标
+- 多 client 能力的基准实现
 
-Why:
+原因：
 
-- current production architecture already exists here
-- Durable Objects match the current minimal generation-state design well
-- migration risk is lowest
+- 现有生产实现已在此平台运行
+- Durable Objects 与当前最小 generation 状态模型高度契合
+- 迁移风险最低
 
-Expected v2 outcome:
+目标结果：
 
-- one Worker deployment serves multiple Docker clients
-- Cloudflare remains the first fully supported production platform
+- 一个 Worker 部署服务多个 Docker client
+- Cloudflare 继续作为首个正式支持的平台
 
-## 7.2 Deno Deploy PoC
+### 7.2 Deno Deploy PoC
 
-Role:
+定位：
 
-- first portability validation target
+- 第一优先级可移植性验证平台
 
-Why:
+原因：
 
-- strong runtime capabilities
-- standard Deno runtime
-- built-in `Deno KV`
-- good fit for a platform-neutral service-core validation
+- 运行时能力强
+- 使用标准 Deno runtime
+- 内置 `Deno KV`
+- 适合验证平台无关 service-core 是否成立
 
-PoC objective:
+PoC 目标：
 
-- prove that bootstrap/query/refresh can run on Deno Deploy without changing
-  the Docker protocol
+- 在不修改 Docker 协议的前提下跑通 Bootstrap / Query / Refresh
 
-PoC does not require:
+PoC 不要求：
 
-- production hardening
-- feature parity with Cloudflare operations
-- final performance tuning
+- 生产级运维完备性
+- 与 Cloudflare 的全部功能对齐
+- 最终性能调优
 
-## 7.3 Fastly Compute PoC
+### 7.3 Fastly Compute PoC
 
-Role:
+定位：
 
-- second portability validation target
+- 第二优先级可移植性验证平台
 
-Why:
+原因：
 
-- strong edge execution model
-- explicit support for compute-oriented edge services
-- support for fetch and edge data storage primitives
+- 强边缘执行模型
+- 明确面向计算型边缘服务
+- 支持 fetch 与边缘数据存储能力
 
-PoC objective:
+PoC 目标：
 
-- prove that the Worker core can operate in a Wasm-oriented edge environment
-- validate storage, fetch, and binary request/response viability
+- 验证 Worker 核心在 Wasm 风格边缘环境中可运行
+- 验证二进制请求、DoH fetch、最小状态模型的可落地性
 
-PoC does not require:
+PoC 不要求：
 
-- full operational parity
-- broad deployment tooling parity
-- final production SLA positioning
+- 全面生产级运维能力
+- 与 Cloudflare 的部署工具链完全一致
+- 发布级 SLA 承诺
 
-## 8. Workstreams
+## 8. 工作流与实施主线
 
-v2 should be split into parallel but dependency-aware workstreams.
+v2 的实施不应同时多线大改，而应遵循“主线优先、适配验证后置”的顺序。
 
-### W1. Architecture Refactor
+### W1. 架构重构
 
-Scope:
+范围：
 
-- separate protocol-core from runtime logic
-- define platform-neutral interfaces
-- reduce Cloudflare-specific coupling
+- 拆出 protocol-core
+- 拆出 service-core
+- 定义平台无关接口
+- 降低 Cloudflare 特有耦合
 
-Deliverables:
+产出：
 
-- core module boundaries
-- interface definitions
-- updated directory structure
+- 清晰的核心模块边界
+- 抽象接口定义
+- 更新后的目录结构方案
 
-### W2. Multi-Client Cloudflare Support
+### W2. Cloudflare 多 client 支持
 
-Scope:
+范围：
 
-- introduce client registry
-- route requests by `client_id_prefix`
-- isolate generation state by client
-- enforce stronger refresh semantics
+- 引入 client registry
+- 基于 `client_id_prefix` 路由请求
+- client 级 generation 隔离
+- 配置模型升级
 
-Deliverables:
+产出：
 
-- Cloudflare multi-client Worker implementation
-- registry configuration model
-- migration documentation
+- Cloudflare Workers v2 多 client 实现
+- registry 配置方案
+- 运维与迁移说明
 
-### W3. Refresh Attestation Enforcement
+### W3. Refresh 认证补强
 
-Scope:
+范围：
 
-- move refresh reserved fields from parse-only to policy-enforced state
-- define exact verification rules
-- ensure compatibility with existing Docker transport behavior
+- 将当前“只解析不强校验”的 refresh 字段升级为真正的校验边界
+- 定义精确 refresh 验证规则
+- 保持与 Docker 当前实现兼容
 
-Deliverables:
+产出：
 
-- formal refresh validation rules
-- tests for valid/invalid refresh paths
-- updated protocol documentation
+- refresh 校验规则文档
+- 正常 / 异常路径测试
+- 协议文档更新
 
-### W4. State Adapter Abstraction
+### W4. 状态适配抽象
 
-Scope:
+范围：
 
-- abstract generation store
-- define registry backend interface
-- define platform-specific adapters
+- 抽象 generation store
+- 抽象 client registry backend
+- 定义 Deno / Fastly 状态适配接口
 
-Deliverables:
+产出：
 
 - Cloudflare state adapter
 - Deno state adapter
@@ -386,174 +375,173 @@ Deliverables:
 
 ### W5. Deno Deploy PoC
 
-Scope:
+范围：
 
-- create Deno adapter
-- wire Deno KV
-- validate bootstrap/query/refresh
+- 实现 Deno runtime adapter
+- 接入 Deno KV
+- 跑通 Bootstrap / Query / Refresh
 
-Deliverables:
+产出：
 
-- runnable Deno PoC
-- deployment instructions
-- known limitations list
+- 可运行 Deno PoC
+- 部署说明
+- 已知限制清单
 
 ### W6. Fastly Compute PoC
 
-Scope:
+范围：
 
-- create Fastly adapter
-- validate request parsing, DoH fetch, and state persistence
-- confirm feasibility of current crypto and protocol assumptions
+- 实现 Fastly runtime adapter
+- 验证请求解析、DoH 转发、状态存储
+- 校验现有 crypto / protocol 假设是否成立
 
-Deliverables:
+产出：
 
-- runnable Fastly PoC
-- platform notes
-- known limitations list
+- 可运行 Fastly PoC
+- 平台说明
+- 已知限制清单
 
-### W7. Documentation and Migration
+### W7. 文档与迁移材料
 
-Scope:
+范围：
 
-- update architecture docs
-- document multi-client operations
-- document platform matrix
+- 更新架构文档
+- 输出平台能力矩阵
+- 输出 v1 -> v2 迁移说明
 
-Deliverables:
+产出：
 
-- v2 architecture document
-- platform capability matrix
-- migration guide
+- `docs/v2-architecture.md`
+- `docs/platform-matrix.md`
+- `docs/migration-v1-to-v2.md`
 
-## 9. Milestones
+## 9. 里程碑计划
 
-## M0. Planning Freeze
+### M0. 规划冻结
 
-Goal:
+目标：
 
-- agree on architecture boundaries and v2 scope
+- 冻结 v2 范围、边界和设计原则
 
-Entry criteria:
+进入条件：
 
-- this development plan approved
+- 本开发计划评审通过
 
-Exit criteria:
+退出条件：
 
-- interface plan accepted
-- multi-client model accepted
-- supported platform list frozen for v2
+- 多 client 方案确认
+- 平台清单确认
+- 核心抽象方向确认
 
-## M1. Core Refactor
+### M1. 核心重构
 
-Goal:
+目标：
 
-- create protocol-core and service-core boundaries
+- 完成 protocol-core 与 service-core 的边界拆分
 
-Tasks:
+关键任务：
 
-- move crypto/protocol/ticket logic into portable core
-- define state and runtime interfaces
-- keep existing Cloudflare behavior unchanged during refactor
+- 将协议、密码学、ticket 逻辑下沉到可复用核心
+- 定义状态与运行时接口
+- 保持 Cloudflare 现有行为不变
 
-Exit criteria:
+退出条件：
 
-- Cloudflare single-client mode still works
-- no regression in current protocol behavior
-- platform adapters are technically possible without major rewrites
+- Cloudflare 单 client 路径仍可正常工作
+- 现有协议无行为回归
+- 多平台 adapter 具备可实现基础
 
-## M2. Cloudflare Workers v2 Multi-Client
+### M2. Cloudflare Workers v2 多 client
 
-Goal:
+目标：
 
-- deliver one Worker serving multiple Docker clients
+- 实现一个 Worker 部署服务多个 Docker client
 
-Tasks:
+关键任务：
 
-- add client registry
-- replace single `env.ROOT_SEED` assumption in request flows
-- route each request to a client context
-- isolate generation state by client
-- add operator configuration for multiple clients
+- 增加 client registry
+- 去除请求路径中对单一 `env.ROOT_SEED` 的硬编码依赖
+- 按 client 上下文处理 Bootstrap / Query / Refresh
+- 形成多 client 运维配置方式
 
-Exit criteria:
+退出条件：
 
-- one Worker can serve at least three independent Docker clients
-- one client cannot consume another client's generation namespace
-- bootstrap/query/refresh are all client-isolated
+- 一个 Worker 至少可稳定服务三个独立 Docker client
+- client 之间 generation 不串扰
+- Bootstrap / Query / Refresh 全链路隔离成立
 
-## M3. Refresh Attestation Hardening
+### M3. Refresh 语义补强
 
-Goal:
+目标：
 
-- enforce stronger refresh acceptance rules
+- 让 refresh 预留字段成为真实安全边界的一部分
 
-Tasks:
+关键任务：
 
-- validate `spent_bundle_gen`
-- validate `spent_query_count`
-- validate `refresh_proof`
-- define failure semantics and error codes
+- 校验 `spent_bundle_gen`
+- 校验 `spent_query_count`
+- 校验 `refresh_proof`
+- 明确失败语义与错误码策略
 
-Exit criteria:
+退出条件：
 
-- reserved refresh fields become active security inputs
-- invalid refresh claims are rejected deterministically
+- refresh 保留字段正式参与判定
+- 非法 refresh 请求被稳定拒绝
 
-## M4. Deno Deploy PoC
+### M4. Deno Deploy PoC
 
-Goal:
+目标：
 
-- prove platform portability on Deno Deploy
+- 验证 Deno Deploy 上的端到端可行性
 
-Tasks:
+关键任务：
 
-- implement Deno runtime adapter
-- implement Deno KV-backed state adapter
-- deploy and test bootstrap/query/refresh
+- 实现 Deno 入口
+- 实现 Deno KV 状态适配
+- 跑通 Bootstrap / Query / Refresh
 
-Exit criteria:
+退出条件：
 
-- end-to-end encrypted query flow works on Deno Deploy
-- limitations are documented
+- Deno Deploy 上能完成完整加密查询流程
+- 已知限制完成文档化
 
-## M5. Fastly Compute PoC
+### M5. Fastly Compute PoC
 
-Goal:
+目标：
 
-- prove platform portability on Fastly Compute
+- 验证 Fastly Compute 上的端到端可行性
 
-Tasks:
+关键任务：
 
-- implement Fastly runtime adapter
-- implement Fastly-compatible state adapter
-- validate binary request/response handling and DoH relay flow
+- 实现 Fastly 入口
+- 实现最小状态适配
+- 验证二进制请求 / 响应与 DoH relay
 
-Exit criteria:
+退出条件：
 
-- end-to-end encrypted query flow works on Fastly Compute
-- limitations are documented
+- Fastly 上能完成完整加密查询流程
+- 已知限制完成文档化
 
-## M6. Documentation Completion
+### M6. 文档收口
 
-Goal:
+目标：
 
-- complete all v2 planning and operator docs
+- 完成 v2 规划、实施、迁移与平台评估材料
 
-Tasks:
+关键任务：
 
-- update architecture docs
-- publish migration notes
-- publish capability matrix
-- publish operator guidance
+- 更新架构文档
+- 输出平台矩阵
+- 输出迁移说明
+- 输出实施分解文档
 
-Exit criteria:
+退出条件：
 
-- docs are sufficient for implementation and evaluation
+- 文档足以指导后续编码与评审
 
-## 10. Proposed Directory Evolution
+## 10. 目录演进建议
 
-One possible target structure:
+建议的目标结构如下：
 
 ```text
 worker/
@@ -587,166 +575,161 @@ docs/
   migration-v1-to-v2.md
 ```
 
-This structure is illustrative. Exact naming can change during implementation.
+此结构为建议草案，实际命名可在实现阶段微调。
 
-## 11. Testing Strategy
+## 11. 测试策略
 
-### 11.1 Core Tests
+### 11.1 核心测试
 
-Must cover:
+必须覆盖：
 
-- protocol encode/decode round trips
-- ticket verification
-- bootstrap proof verification
-- refresh proof verification
-- bundle serialization compatibility
+- 协议编解码 round trip
+- ticket 校验
+- bootstrap proof 校验
+- refresh proof 校验
+- KeyBundle 兼容性
 
-### 11.2 Cloudflare Multi-Client Tests
+### 11.2 Cloudflare 多 client 测试
 
-Must cover:
+必须覆盖：
 
-- multiple registered clients
-- correct routing by `client_id_prefix`
-- cross-client ticket rejection
-- generation isolation
-- refresh isolation
+- 多 client 注册
+- `client_id_prefix` 路由正确性
+- 跨 client ticket 拒绝
+- generation 隔离
+- refresh 隔离
 
-### 11.3 Platform Smoke Tests
+### 11.3 平台冒烟测试
 
-For Deno and Fastly PoCs:
+对 Deno 和 Fastly PoC，至少应覆盖：
 
-- bootstrap success
-- encrypted query success
-- refresh success
-- failure mode reporting
+- bootstrap 成功
+- 加密 query 成功
+- refresh 成功
+- 失败路径能正确返回错误
 
-### 11.4 Regression Tests
+### 11.4 回归测试
 
-Must ensure:
+必须保证：
 
-- Docker protocol remains compatible
-- no DNS content is persisted
-- hot path remains binary and lightweight
+- Docker 协议兼容
+- 不持久化 DNS 内容
+- 热路径仍保持轻量二进制协议
 
-## 12. Acceptance Criteria
+## 12. 验收标准
 
-v2 planning and implementation should be considered successful only if all of
-the following hold:
+只有当以下条件全部满足时，v2 才可视为规划成功并具备实施基础：
 
-- Cloudflare Workers supports multiple Docker clients within one deployment
-- Worker-side state remains minimal and client-scoped
-- no persistent session table is introduced
-- no DNS query history is persisted
-- Docker deployment stays lightweight
-- Deno Deploy PoC completes bootstrap/query/refresh end-to-end
-- Fastly Compute PoC completes bootstrap/query/refresh end-to-end
-- platform differences are isolated behind adapters
+- Cloudflare Workers 支持一个部署服务多个 Docker client
+- Worker 侧状态仍然保持最小、按 client 隔离
+- 未引入持久化 session table
+- 未引入 DNS 查询历史存储
+- Docker 部署方式仍保持轻量
+- Deno Deploy PoC 完成 Bootstrap / Query / Refresh 全链路
+- Fastly Compute PoC 完成 Bootstrap / Query / Refresh 全链路
+- 平台差异被控制在 adapter 层
 
-## 13. Key Risks
+## 13. 主要风险
 
-### R1. Cross-Client Isolation Bugs
+### R1. client 隔离错误
 
-Risk:
+风险：
 
-- a request may be routed to the wrong client context
+- 请求被错误路由到其他 client 上下文
 
-Mitigation:
+缓解：
 
-- strict client lookup path
-- cross-client rejection tests
-- generation-store isolation tests
+- 严格 client lookup 路径
+- 跨 client 拒绝测试
+- generation 状态隔离测试
 
-### R2. Refresh Semantics Drift
+### R2. refresh 语义漂移
 
-Risk:
+风险：
 
-- Docker and Worker may disagree once refresh attestation becomes enforced
+- Docker 与 Worker 在 refresh 语义升级后出现不一致
 
-Mitigation:
+缓解：
 
-- formal refresh rules before coding
-- compatibility tests against existing Docker transport
+- 编码前先冻结 refresh 验证规则
+- 对现有 Docker transport 做兼容测试
 
-### R3. Platform State Semantics Differ
+### R3. 平台状态语义差异
 
-Risk:
+风险：
 
-- Cloudflare DO, Deno KV, and Fastly storage differ in consistency and latency
+- Cloudflare DO、Deno KV、Fastly 存储的一致性和延迟语义不完全相同
 
-Mitigation:
+缓解：
 
-- keep state contract minimal
-- document guarantees per platform
-- avoid overfitting logic to strong consistency assumptions
+- 将状态契约保持极小
+- 明确记录平台保证边界
+- 避免把实现建立在强一致假设之上
 
-### R4. Portability Refactor Becomes Too Large
+### R4. 可移植性重构过大
 
-Risk:
+风险：
 
-- abstraction work may destabilize the Cloudflare path
+- 抽象工作反而影响 Cloudflare 主线稳定性
 
-Mitigation:
+缓解：
 
-- refactor in phases
-- keep Cloudflare as the first reference target
-- do not start both PoCs before M2 is stable
+- 分阶段重构
+- 始终以 Cloudflare 为第一参考实现
+- 在 M2 稳定前不同时推进两个 PoC 的深入实现
 
-### R5. Over-Engineering
+### R5. 过度抽象
 
-Risk:
+风险：
 
-- platform abstraction may introduce too much framework code
+- 为未来平台预留过多抽象，反而提升复杂度
 
-Mitigation:
+缓解：
 
-- keep interfaces narrow
-- avoid speculative abstractions
-- only support the three approved platform tracks
+- 接口只做窄而必要的抽象
+- 不做投机性平台设计
+- 始终只围绕已批准的三个平台推进
 
-## 14. Delivery Order Recommendation
+## 14. 建议交付顺序
 
-Recommended execution order:
+推荐执行顺序：
 
-1. planning freeze
-2. core refactor
-3. Cloudflare Workers v2 multi-client
-4. refresh attestation hardening
+1. 规划冻结
+2. 核心重构
+3. Cloudflare Workers v2 多 client
+4. refresh 认证补强
 5. Deno Deploy PoC
 6. Fastly Compute PoC
-7. final documentation pass
+7. 文档收口
 
-This order keeps the primary product goal ahead of portability experiments.
+这个顺序确保主业务价值优先落地，平台 PoC 不会阻塞核心目标。
 
-## 15. Release Strategy Recommendation
+## 15. 建议版本节奏
 
-Recommended release labeling:
+建议采用如下版本节奏：
 
-- **v2.0**: Cloudflare Workers multi-client support
-- **v2.1**: Deno Deploy PoC or experimental adapter
-- **v2.2**: Fastly Compute PoC or experimental adapter
+- **v2.0**：Cloudflare Workers 多 client 正式支持
+- **v2.1**：Deno Deploy 实验性 PoC / adapter
+- **v2.2**：Fastly Compute 实验性 PoC / adapter
 
-Reason:
+原因：
 
-- the main business value is multi-client support on the existing production
-  platform
-- PoCs should not block the primary release
+- 真正的产品价值首先来自现有主平台的多 client 升级
+- Deno 与 Fastly 应先以验证性成果进入代码库
 
-## 16. Immediate Next Steps
+## 16. 后续规划文档
 
-The next planning artifacts recommended after this document are:
+建议在本计划基础上继续补齐以下文档：
 
 1. `docs/v2-architecture.md`
 2. `docs/platform-matrix.md`
 3. `docs/migration-v1-to-v2.md`
-4. implementation task breakdown by milestone
+4. 里程碑级任务拆分文档
 
-## 17. Final Position
+## 17. 最终结论
 
-Trusted-DNS v2 should be built as a **multi-client evolution of the existing
-stateless protocol architecture**, not as a heavy redesign.
+Trusted-DNS v2 的正确方向，不是做一次重型重构，而是：
 
-The correct v2 path is:
-
-- **first** make Cloudflare Workers support multiple clients cleanly
-- **then** validate portability through Deno Deploy and Fastly Compute PoCs
-- **always** preserve lightweight deployment and minimal persistent state
+- **先** 将现有 Cloudflare Worker 升级为多 client Worker
+- **再** 通过 Deno Deploy 与 Fastly Compute PoC 验证核心架构可移植性
+- **始终** 保持 v1 已验证成功的轻量化、无状态、最小持久状态原则
