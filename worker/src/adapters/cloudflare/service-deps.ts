@@ -5,18 +5,11 @@ import {
   markGenerationUsed,
 } from './generation-store';
 import type { ServiceDeps } from '../../core/services/deps';
+import { createCloudflareClientSelector } from './client-registry';
 
 export function createCloudflareServiceDeps(env: CloudflareEnv): ServiceDeps {
   return {
-    clients: {
-      async getClientConfig(clientIdPrefix: Uint8Array) {
-        return {
-          rootSeedHex: env.ROOT_SEED,
-          dohUpstreams: env.DOH_UPSTREAMS,
-          dohTimeoutMs: parseInt(env.DOH_TIMEOUT_MS || '5000', 10),
-        };
-      },
-    },
+    clients: createCloudflareClientSelector(env),
     generation: {
       getState(clientId) {
         return getGenerationState(env, clientId);

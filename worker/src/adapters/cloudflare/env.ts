@@ -5,4 +5,5 @@ export interface CloudflareEnv {
   DOH_TIMEOUT_MS?: string;
   DEBUG_MODE?: string;
   PROTOCOL_PATH?: string;
+  CLIENT_REGISTRY?: string;
 }
