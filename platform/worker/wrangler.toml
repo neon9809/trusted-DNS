@@ -4,6 +4,10 @@ compatibility_date = "2024-12-01"
 
 [vars]
 DOH_UPSTREAMS = '["https://dns.google/dns-query","https://cloudflare-dns.com/dns-query","https://1.1.1.1/dns-query"]'
+# Example multi-client registry for Cloudflare one-click deploy.
+# Replace the sample root_seed values with your own 64-character hex seeds,
+# or remove CLIENT_REGISTRY entirely if you want single-client mode.
+CLIENT_REGISTRY = '[{"root_seed":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","enabled":true},{"root_seed":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","enabled":true}]'
 # Optional: Custom path for the protocol endpoint (default: /dns-query)
 # PROTOCOL_PATH = "/custom-path"
 [durable_objects]

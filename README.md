@@ -160,7 +160,7 @@ but they still consume ticket/query budget and can still lead to a refresh.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/neon9809/trusted-DNS/tree/main/platform/worker)
 
-*Note: You will be prompted to enter a `ROOT_SEED` during deployment. Generate one using `openssl rand -hex 32`.*
+*Note: The one-click deploy template now pre-fills `DOH_UPSTREAMS` and a sample `CLIENT_REGISTRY`. Replace the sample `root_seed` values with your own 64-character hex seeds, or remove `CLIENT_REGISTRY` if you want single-client mode. Generate each seed using `openssl rand -hex 32`.*
 
 **Option B: Manual Deploy**
 
@@ -168,7 +168,7 @@ but they still consume ticket/query budget and can still lead to a refresh.
 cd platform/worker
 cp ../../examples/worker.env.example .env
 
-# Edit wrangler.toml with your ROOT_SEED and DoH upstreams
+# Edit wrangler.toml with your ROOT_SEED, DOH upstreams, and optional CLIENT_REGISTRY
 pnpm install
 pnpm deploy
 ```
@@ -179,7 +179,10 @@ Configure the following variables in `wrangler.toml` or as Worker secrets:
 [vars]
 ROOT_SEED = "your-64-char-hex-seed"
 DOH_UPSTREAMS = '["https://dns.google/dns-query","https://cloudflare-dns.com/dns-query","https://1.1.1.1/dns-query"]'
+CLIENT_REGISTRY = '[{"root_seed":"seed-a","enabled":true},{"root_seed":"seed-b","enabled":true}]'
 ```
+
+If `CLIENT_REGISTRY` is set, the Worker uses multi-client routing and looks up each client by `client_id_prefix`. If `CLIENT_REGISTRY` is omitted, the Worker falls back to single-client mode and uses `ROOT_SEED`.
 
 ### 2. Deploy the Docker Node
 
@@ -220,9 +223,10 @@ Point your devices' DNS settings to the Docker node's IP address. For example, i
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ROOT_SEED` | Yes | — | Shared 64-character hex secret (must match Docker) |
-| `DOH_UPSTREAMS` | Yes | — | JSON array of DoH upstream URLs |
+| `DOH_UPSTREAMS` | Yes | Google + Cloudflare + `1.1.1.1` | JSON array of default DoH upstream URLs. Used directly in single-client mode, and as the fallback upstream set for registry entries that do not override it. |
 | `DOH_TIMEOUT_MS` | No | `5000` | Per-upstream timeout in milliseconds |
 | `PROTOCOL_PATH` | No | `/dns-query` | Custom protocol endpoint path (must match Docker) |
+| `CLIENT_REGISTRY` | No | — | JSON array string for multi-client routing. Each entry must include a `root_seed`, and may optionally override `doh_upstreams` and `doh_timeout_ms`. Omit it to keep single-client mode with `ROOT_SEED`. |
 
 ## Deployment Scope And Multi-Node Notes
 
