@@ -1,12 +1,3 @@
-/**
- * Minimal v2 HTTP service shell.
- *
- * This module is intentionally small: it centralizes the non-platform-specific
- * HTTP routing shape used by the Worker entrypoint, while delegating protocol
- * processing to the current implementation. It lets us migrate behavior
- * incrementally without changing protocol semantics up front.
- */
-
 export interface HttpServiceConfig {
   protocolPath: string;
   protocolVersion: number;

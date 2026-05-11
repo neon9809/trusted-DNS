@@ -1,11 +1,3 @@
-/**
- * v2 platform-neutral interfaces.
- *
- * These interfaces define the minimum contracts the service-core expects from
- * runtime adapters and state backends. They are intentionally narrow so the
- * existing Cloudflare implementation can be migrated incrementally.
- */
-
 export interface ClientDescriptor {
   clientId: Uint8Array;
   clientIdPrefix: Uint8Array;

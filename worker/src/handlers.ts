@@ -65,6 +65,8 @@ import {
   getGenerationState,
   markGenerationUsed,
 } from './adapters/cloudflare/generation-store';
+import { binaryResponse } from './core/binary-response';
+import { handleBootstrap } from './core/services/bootstrap';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -123,103 +125,6 @@ export async function handleRequest(
       buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_INTERNAL),
     );
   }
-}
-
-// ─── Bootstrap Handler ──────────────────────────────────────────────
-
-async function handleBootstrap(
-  header: ProtocolHeader,
-  payload: Uint8Array,
-  env: Env,
-): Promise<Response> {
-  const rootSeed = hexToBytes(env.ROOT_SEED);
-  const keys = await deriveAllKeys(rootSeed);
-  const clientId = await deriveClientId(rootSeed);
-
-  // Parse bootstrap payload:
-  // boot_nonce(16) + timestamp_ms(8) + bootstrap_proof(16) + capabilities(4)
-  if (payload.length < 44) {
-    return binaryResponse(
-      buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TICKET),
-    );
-  }
-
-  const bootNonce = payload.slice(0, 16);
-  const dv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-  const timestampMs = dv.getBigUint64(16, false);
-  const bootstrapProof = payload.slice(24, 40);
-  // capabilities at offset 40, 4 bytes (reserved for future use)
-
-  // Verify bootstrap proof
-  const proofValid = await verifyBootstrapProof(
-    keys.bootstrapKey, bootNonce, timestampMs, bootstrapProof,
-  );
-  if (!proofValid) {
-    return binaryResponse(
-      buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TICKET),
-    );
-  }
-
-  // Check timestamp within acceptable window
-  const now = BigInt(Date.now());
-  const skew = BigInt(300_000);
-  if (now < timestampMs - skew || now > timestampMs + skew) {
-    return binaryResponse(
-      buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_EXPIRED),
-    );
-  }
-
-  // Get current generation from Durable Object
-  const genState = await getGenerationState(env, clientId);
-
-  const newGen = BigInt(genState.latestBundleGen + 1);
-
-  // Advance generation
-  await advanceGenerationState(env, clientId, Number(newGen));
-
-  // Issue KeyBundle
-  const bundle = await issueKeyBundle(
-    clientId, newGen, keys.ticketAuthKey, keys.refreshAuthKey,
-  );
-
-  // Serialize and encrypt KeyBundle
-  const bundleBytes = serializeKeyBundle(bundle);
-  const aad = encodeHeader({
-    ...header,
-    msgType: MSG_BOOTSTRAP_RESP,
-    bundleGen: newGen,
-    payloadLen: 0, // will be set later
-  });
-
-  const { nonce, ciphertext } = await aeadEncrypt(keys.bundleWrapKey, bundleBytes, aad);
-
-  // Build response payload: server_time_ms(8) + bundle_gen(8) + nonce(12) + ciphertext
-  const respPayloadLen = 8 + 8 + NONCE_SIZE + ciphertext.length;
-  const respPayload = new Uint8Array(respPayloadLen);
-  const rpDv = new DataView(respPayload.buffer);
-  rpDv.setBigUint64(0, now, false);
-  rpDv.setBigUint64(8, newGen, false);
-  respPayload.set(nonce, 16);
-  respPayload.set(ciphertext, 16 + NONCE_SIZE);
-
-  // Build response header
-  const respHeader = encodeHeader({
-    ver: PROTOCOL_VERSION,
-    msgType: MSG_BOOTSTRAP_RESP,
-    flags: 0,
-    clientIdPrefix: clientId.slice(0, 8),
-    bundleGen: newGen,
-    ticketId: 0,
-    seq: 0,
-    payloadLen: respPayloadLen,
-    headerMac: 0,
-  });
-
-  const response = new Uint8Array(HEADER_SIZE + respPayloadLen);
-  response.set(respHeader, 0);
-  response.set(respPayload, HEADER_SIZE);
-
-  return binaryResponse(response);
 }
 
 // ─── Query Handler ──────────────────────────────────────────────────
@@ -490,14 +395,4 @@ async function handleRefresh(
   return binaryResponse(response);
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────
-
-function binaryResponse(data: Uint8Array): Response {
-  return new Response(data, {
-    status: 200,
-    headers: {
-      'Content-Type': 'application/octet-stream',
-      'Cache-Control': 'no-store',
-    },
-  });
-}
+ 

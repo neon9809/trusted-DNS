@@ -1,11 +1,3 @@
-/**
- * Cloudflare GenerationStore adapter helpers.
- *
- * These helpers isolate the concrete Durable Object request pattern used by the
- * current implementation so query/bootstrap/refresh logic can gradually move to
- * service-core without carrying Cloudflare-specific fetch details around.
- */
-
 import { bytesToHex } from '../../crypto';
 import type { CloudflareEnv } from './env';
 import type { GenerationState } from '../../generation-store';
