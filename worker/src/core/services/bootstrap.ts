@@ -17,16 +17,22 @@ import {
   verifyBootstrapProof,
 } from '../../crypto';
 import { issueKeyBundle, serializeKeyBundle } from '../../tickets';
-import type { CloudflareEnv } from '../../adapters/cloudflare/env';
-import { advanceGenerationState, getGenerationState } from '../../adapters/cloudflare/generation-store';
 import { binaryResponse } from '../binary-response';
+import type { ServiceDeps } from './deps';
 
 export async function handleBootstrap(
   header: ProtocolHeader,
   payload: Uint8Array,
-  env: CloudflareEnv,
+  deps: ServiceDeps,
 ): Promise<Response> {
-  const rootSeed = hexToBytes(env.ROOT_SEED);
+  const clientConfig = await deps.clients.getClientConfig(header.clientIdPrefix);
+  if (!clientConfig) {
+    return binaryResponse(
+      buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TICKET),
+    );
+  }
+
+  const rootSeed = hexToBytes(clientConfig.rootSeedHex);
   const keys = await deriveAllKeys(rootSeed);
   const clientId = await deriveClientId(rootSeed);
 
@@ -50,7 +56,7 @@ export async function handleBootstrap(
     );
   }
 
-  const now = BigInt(Date.now());
+  const now = deps.nowMs();
   const skew = BigInt(300_000);
   if (now < timestampMs - skew || now > timestampMs + skew) {
     return binaryResponse(
@@ -58,10 +64,10 @@ export async function handleBootstrap(
     );
   }
 
-  const genState = await getGenerationState(env, clientId);
+  const genState = await deps.generation.getState(clientId);
   const newGen = BigInt(genState.latestBundleGen + 1);
 
-  await advanceGenerationState(env, clientId, Number(newGen));
+  await deps.generation.advance(clientId, Number(newGen));
 
   const bundle = await issueKeyBundle(
     clientId, newGen, keys.ticketAuthKey, keys.refreshAuthKey,

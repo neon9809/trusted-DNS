@@ -27,18 +27,24 @@ import {
 import { verifySessionTicket } from '../../tickets';
 import { resolve, parseUpstreams, ResolverConfig } from '../../resolver';
 import { AntiReplayCache } from '../../replay';
-import type { CloudflareEnv } from '../../adapters/cloudflare/env';
-import { getGenerationState, markGenerationUsed } from '../../adapters/cloudflare/generation-store';
 import { binaryResponse } from '../binary-response';
+import type { ServiceDeps } from './deps';
 
 const replayCache = new AntiReplayCache(8192, 120_000);
 
 export async function handleQuery(
   header: ProtocolHeader,
   payload: Uint8Array,
-  env: CloudflareEnv,
+  deps: ServiceDeps,
 ): Promise<Response> {
-  const rootSeed = hexToBytes(env.ROOT_SEED);
+  const clientConfig = await deps.clients.getClientConfig(header.clientIdPrefix);
+  if (!clientConfig) {
+    return binaryResponse(
+      buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TICKET),
+    );
+  }
+
+  const rootSeed = hexToBytes(clientConfig.rootSeedHex);
   const keys = await deriveAllKeys(rootSeed);
   const clientId = await deriveClientId(rootSeed);
 
@@ -70,9 +76,9 @@ export async function handleQuery(
   const ciphertext = payload.slice(SESSION_TICKET_SIZE + NONCE_SIZE, actualPayloadLen);
 
   const ticket = decodeSessionTicket(ticketBlob);
-  const nowMs = BigInt(Date.now());
+  const nowMs = deps.nowMs();
 
-  const genState = await getGenerationState(env, clientId);
+  const genState = await deps.generation.getState(clientId);
 
   if (Number(ticket.bundleGen) < genState.latestBundleGen) {
     return binaryResponse(
@@ -102,7 +108,7 @@ export async function handleQuery(
     );
   }
 
-  await markGenerationUsed(env, clientId, Number(ticket.bundleGen));
+  await deps.generation.markUsed(clientId, Number(ticket.bundleGen));
 
   const queryKeys = await deriveQueryKeys(ticket.resumeSeed);
 
@@ -121,10 +127,10 @@ export async function handleQuery(
     );
   }
 
-  const upstreams = parseUpstreams(env.DOH_UPSTREAMS);
+  const upstreams = parseUpstreams(clientConfig.dohUpstreams);
   const resolverConfig: ResolverConfig = {
     upstreams,
-    timeoutMs: parseInt(env.DOH_TIMEOUT_MS || '5000', 10),
+    timeoutMs: clientConfig.dohTimeoutMs,
   };
 
   let resolverResult;

@@ -24,6 +24,7 @@ import { binaryResponse } from './core/binary-response';
 import { handleBootstrap } from './core/services/bootstrap';
 import { handleQuery } from './core/services/query';
 import { handleRefresh } from './core/services/refresh';
+import { createCloudflareServiceDeps } from './adapters/cloudflare/service-deps';
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -59,15 +60,16 @@ export async function handleRequest(
   }
 
   const payload = data.slice(HEADER_SIZE, HEADER_SIZE + header.payloadLen);
+  const deps = createCloudflareServiceDeps(env);
 
   try {
     switch (header.msgType) {
       case MSG_BOOTSTRAP_REQ:
-        return await handleBootstrap(header, payload, env);
+        return await handleBootstrap(header, payload, deps);
       case MSG_QUERY_REQ:
-        return await handleQuery(header, payload, env);
+        return await handleQuery(header, payload, deps);
       case MSG_REFRESH_REQ:
-        return await handleRefresh(header, payload, env);
+        return await handleRefresh(header, payload, deps);
       default:
         return binaryResponse(
           buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TYPE),
