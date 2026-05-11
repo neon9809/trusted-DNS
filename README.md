@@ -60,6 +60,7 @@ The repository also now reserves `platform/deno/` and `platform/fastly/` as v2.1
 - Short-window anti-replay protection with sequence number validation
 - Zero DNS query history: no QNAME, QTYPE, or answer content is ever persisted
 - Minimal state: only `client_id → latest_bundle_gen` is stored per client
+- Multi-client isolation on the Worker side through static `CLIENT_REGISTRY` routing
 - Resilient Transport: Explicit context timeouts and strict connection constraints to prevent half-open drops.
 
 **Performance**
@@ -68,6 +69,14 @@ The repository also now reserves `platform/deno/` and `platform/fastly/` as v2.1
 - "Primary + Secondary Race, Tertiary Fallback" upstream strategy for optimal latency
 - Optional A/AAAA record probing and reordering for improved connection quality
 - Compact binary protocol (no JSON on hot path)
+
+**v2.0 Architecture & Operations**
+
+- `Bootstrap`, `Query`, and `Refresh` are split into independent service handlers instead of staying in one monolithic Worker file
+- Service logic now uses dependency injection, so runtime-specific Cloudflare wiring is separated from protocol flow
+- Static multi-client registry is configured entirely through environment variables, without introducing a control plane or external database
+- End-to-end smoke scripts cover bootstrap, query, refresh, registry verification, and single-Worker multi-client validation
+- The repository now uses `platform/worker` as the active Cloudflare runtime root, with `platform/deno` and `platform/fastly` reserved for v2.1 PoC work
 
 **Deployment**
 
@@ -277,7 +286,7 @@ Trusted-DNS uses a three-phase protocol model:
 
 Each `KeyBundle` contains **5 session tickets** (200 queries each) and **1 refresh ticket**, providing a total budget of **1000 queries per generation**. This design avoids full handshakes on the hot path while maintaining clear security semantics.
 
-In the current v1 implementation, the Refresh request carries `spent_bundle_gen`, `spent_query_count`, and `refresh_proof` as forward-compatible fields. They are reserved for a future multi-client Worker mode and are not yet enforced as standalone refresh acceptance criteria.
+In the current v2.0 implementation, the Refresh request still carries `spent_bundle_gen`, `spent_query_count`, and `refresh_proof` as forward-compatible fields. They remain reserved for a future refresh-semantics upgrade and are not yet enforced as standalone refresh acceptance criteria.
 
 For detailed protocol specification, see [docs/protocol.md](docs/protocol.md).
 
