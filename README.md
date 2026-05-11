@@ -39,15 +39,16 @@ Trusted-DNS adopts a **Cloudflare Worker + Local Docker Node** dual-side archite
 └──────────────────────────────┘
 ```
 
-## Current Scope (v1)
+## Current Scope (v2.0)
 
-Trusted-DNS v1 is intentionally scoped as a **single Docker node ↔ single Worker deployment** system:
+Trusted-DNS v2.0 now focuses on a **Cloudflare Worker multi-client deployment** model:
 
-- The Worker derives one stable `client_id` from its configured `ROOT_SEED`
-- The Docker node must use the same `ROOT_SEED` as that Worker deployment
-- One Worker deployment currently manages one client namespace and one generation lifecycle
+- One Cloudflare Worker deployment can serve multiple Docker clients
+- Requests are routed by `client_id_prefix` through `CLIENT_REGISTRY`
+- Generation state is isolated per client while keeping the persistent state model minimal
+- If `CLIENT_REGISTRY` is omitted, the Worker falls back to the original single-client `ROOT_SEED` mode
 
-Fields such as `spent_bundle_gen`, `spent_query_count`, and `refresh_proof` are already present in the wire protocol for forward compatibility, but in v1 they are reserved for a future **multi-client Worker** upgrade. The current implementation treats the refresh ticket as the authoritative refresh credential.
+The repository also now reserves `platform/deno/` and `platform/fastly/` as v2.1 landing areas. Those runtimes are not production-ready yet; they are intentionally kept as skeletons until the Deno and Fastly PoC work starts.
 
 ## Features
 
@@ -230,32 +231,39 @@ Point your devices' DNS settings to the Docker node's IP address. For example, i
 
 ## Deployment Scope And Multi-Node Notes
 
-**Trusted-DNS v1 supports one Docker node per Worker deployment.** The Worker derives exactly one active `client_id` from its configured `ROOT_SEED`, so the supported topology today is:
+**Trusted-DNS v2.0 supports one Cloudflare Worker deployment serving multiple Docker nodes**, as long as the Worker is configured with `CLIENT_REGISTRY` and each Docker node uses its own matching `ROOT_SEED`.
+
+Supported topology:
 
 ```text
-Docker Node A  <->  Worker Deployment A  (ROOT_SEED_A)
-Docker Node B  <->  Worker Deployment B  (ROOT_SEED_B)
+Docker Node A  <->  Worker Deployment A  (CLIENT_REGISTRY contains ROOT_SEED_A)
+Docker Node B  <->  Worker Deployment A  (CLIENT_REGISTRY contains ROOT_SEED_B)
+Docker Node C  <->  Worker Deployment A  (CLIENT_REGISTRY contains ROOT_SEED_C)
 ```
 
 The following combinations matter:
 
 | Scenario | Outcome |
 |---|---|
-| **Two Docker nodes share the same `ROOT_SEED` and the same Worker** | Both nodes derive the same `client_id` and collide on bootstrap, query sequence space, and refresh generation state. |
-| **Two Docker nodes use different `ROOT_SEED`s against the same Worker deployment** | Authentication fails, because the Worker derives keys and `client_id` from its own configured `ROOT_SEED` and does not currently multiplex multiple client namespaces. |
-| **Two Docker nodes each use their own Worker deployment and their own `ROOT_SEED`** | This is the supported v1 deployment model. |
+| **Multiple Docker nodes use different `ROOT_SEED`s against the same Worker, and `CLIENT_REGISTRY` contains all of them** | Supported v2.0 model. Each client gets its own routed context and generation state. |
+| **Multiple Docker nodes use different `ROOT_SEED`s against the same Worker, but `CLIENT_REGISTRY` is missing one of them** | Requests for the missing client fail because the Worker cannot resolve that `client_id_prefix`. |
+| **Two Docker nodes share the same `ROOT_SEED` against the same Worker** | Not recommended. Both nodes derive the same `client_id` and collide on bootstrap, query sequence space, and refresh generation state. |
+| **`CLIENT_REGISTRY` is omitted and only `ROOT_SEED` is configured** | Single-client fallback mode. This preserves the original v1 deployment behavior. |
 
-If you want to run multiple nodes today, create a separate Worker deployment and `ROOT_SEED` for each node:
+If you want to run multiple nodes today, generate a different seed for each node and include every seed in `CLIENT_REGISTRY`:
 
 ```bash
 # Node A
-ROOT_SEED=$(openssl rand -hex 32)
+ROOT_SEED_A=$(openssl rand -hex 32)
 
 # Node B
-ROOT_SEED=$(openssl rand -hex 32)
+ROOT_SEED_B=$(openssl rand -hex 32)
+
+# Node C
+ROOT_SEED_C=$(openssl rand -hex 32)
 ```
 
-Future versions may allow one Worker deployment to serve multiple clients. The refresh attestation fields already present in the protocol were kept for that upgrade path, but v1 does not enable that mode yet.
+At the moment, multi-client production support is implemented only for Cloudflare Workers. `platform/deno/` and `platform/fastly/` are reserved for v2.1 PoC work.
 
 ## Protocol Overview
 
@@ -284,7 +292,7 @@ Trusted-DNS is designed to **reduce the most direct and realistic pollution and 
 - **Generation invalidation**: New bootstrap/refresh invalidates old generations
 - **Basic anti-replay**: Sequence numbers and short-window deduplication
 
-The current security boundary assumes a **single Docker node paired with a single Worker deployment**. Multi-client isolation inside one Worker deployment is explicitly deferred to a future version.
+The current production security boundary assumes **Cloudflare Workers as the active multi-client runtime**. Client isolation inside one Worker deployment is implemented through `CLIENT_REGISTRY` routing plus per-client generation state. Deno and Fastly remain future PoC targets and are not part of the released production boundary yet.
 
 For the complete threat model, see [docs/threat-model.md](docs/threat-model.md).
 
