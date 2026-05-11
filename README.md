@@ -294,6 +294,15 @@ Trusted-DNS/
 │   ├── protocol.md
 │   └── threat-model.md
 ├── platform/
+│   ├── README.md
+│   ├── deno/
+│   │   ├── main.ts               # Deno PoC entry skeleton
+│   │   ├── kv-store.ts           # Deno KV adapter skeleton
+│   │   └── config/
+│   ├── fastly/
+│   │   ├── index.ts              # Fastly PoC entry skeleton
+│   │   ├── store.ts              # Fastly adapter skeleton
+│   │   └── config/
 │   └── worker/
 │       ├── src/
 │       │   ├── index.ts          # Worker entry point
