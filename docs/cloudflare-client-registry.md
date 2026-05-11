@@ -75,3 +75,23 @@ v2 中 Worker 会先基于请求 header 的 `client_id_prefix` 进行 client 路
 - `CLIENT_REGISTRY` 中的 `root_seed` 属于敏感信息，不应写入代码仓库
 - registry 仅用于路由与密钥派生，不应扩展为控制平面或状态数据库
 - generation 状态仍然由 Durable Object 按 `client_id` 维度保存，保持最小状态模型不变
+
+## 7. 本地冒烟验证
+
+仓库提供一个本地冒烟脚本，用于验证 `CLIENT_REGISTRY` 的 prefix 派生与映射逻辑是否自洽：
+
+- [verify-client-registry.js](file:///workspace/worker/scripts/verify-client-registry.js)
+
+运行方式（示例）：
+
+```bash
+cd worker
+export DOH_UPSTREAMS='["https://cloudflare-dns.com/dns-query"]'
+export DOH_TIMEOUT_MS='5000'
+export CLIENT_REGISTRY='[{"root_seed":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","enabled":true},{"root_seed":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","enabled":true}]'
+node scripts/verify-client-registry.js
+```
+
+预期输出：
+
+- `ok: registry entries=..., activePrefixes=...`
