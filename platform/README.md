@@ -6,8 +6,8 @@ This directory groups runtime-specific implementations for Trusted-DNS.
 
 - `src/`: shared protocol, service-core, and runtime-agnostic helpers
 - `cloudflare_worker/`: active Cloudflare Workers implementation and baseline runtime
-- `deno/`: v2.1 Deno PoC entrypoint and adapter landing area
-- `fastly/`: v2.1 Fastly PoC entrypoint and adapter landing area
+- `deno/`: v2.1 Deno PoC entrypoint, `deno.json`, and Deploy Button landing area
+- `fastly/`: v2.1 Fastly PoC entrypoint, `fastly.toml`, and Cloud Deploy scaffold
 
 ## Goal
 

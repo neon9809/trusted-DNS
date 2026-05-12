@@ -1,0 +1,18 @@
+{
+  "tasks": {
+    "dev": "deno run --allow-env --allow-net main.ts",
+    "check": "deno check main.ts kv-store.ts"
+  },
+  "lint": {
+    "include": [
+      "main.ts",
+      "kv-store.ts"
+    ]
+  },
+  "fmt": {
+    "include": [
+      "main.ts",
+      "kv-store.ts"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "trusted-dns-fastly-poc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm exec esbuild index.ts --bundle --platform=browser --format=esm --outfile=bin/index.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}

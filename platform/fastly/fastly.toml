@@ -1,0 +1,17 @@
+# This file describes the Trusted-DNS Fastly Compute PoC package.
+# It is intentionally minimal and is meant to be refined once the PoC
+# is validated in the native Fastly JavaScript runtime.
+
+authors = ["neon9809"]
+description = "Trusted-DNS v2.1 Fastly Compute PoC"
+language = "javascript"
+manifest_version = 3
+name = "trusted-dns-fastly-poc"
+
+[scripts]
+  build = "pnpm build"
+  post_init = "pnpm install"
+
+[local_server]
+
+[setup]

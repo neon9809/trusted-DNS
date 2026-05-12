@@ -14,6 +14,7 @@ docker/trusted-dns
 
 # Worker build
 platform/cloudflare_worker/.wrangler/
+platform/fastly/bin/
 
 # IDE
 .vscode/
