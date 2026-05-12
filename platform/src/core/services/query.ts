@@ -96,7 +96,7 @@ export async function handleQuery(
     );
   }
 
-  if (replayCache.check(ticket.ticketId, header.seq, header.bundleGen)) {
+  if (replayCache.check(header.clientIdPrefix, ticket.ticketId, header.seq, header.bundleGen)) {
     return binaryResponse(
       buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_REPLAY_SUSPECTED),
     );

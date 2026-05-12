@@ -9,6 +9,9 @@ export interface FastlyRuntimeConfig {
   clientRegistry?: string;
 }
 
+let cachedConfigKey: string | undefined;
+let cachedHandler: ReturnType<typeof createFastlyHandler> | undefined;
+
 export function createFastlyHandler(config: FastlyRuntimeConfig) {
   return createRuntimeHttpHandler({
     http: {
@@ -32,14 +35,20 @@ export function createFastlyHandler(config: FastlyRuntimeConfig) {
 
 export default {
   async fetch(request: Request, env: Record<string, string>): Promise<Response> {
-    const handler = createFastlyHandler({
+    const config: FastlyRuntimeConfig = {
       rootSeed: env.ROOT_SEED,
       dohUpstreams: env.DOH_UPSTREAMS ?? '["https://dns.google/dns-query"]',
       dohTimeoutMs: Number(env.DOH_TIMEOUT_MS ?? '5000'),
       protocolPath: env.PROTOCOL_PATH ?? '/dns-query',
       clientRegistry: env.CLIENT_REGISTRY,
-    });
+    };
+    const configKey = JSON.stringify(config);
 
-    return handler.handle(request);
+    if (!cachedHandler || cachedConfigKey !== configKey) {
+      cachedHandler = createFastlyHandler(config);
+      cachedConfigKey = configKey;
+    }
+
+    return cachedHandler.handle(request);
   },
 };

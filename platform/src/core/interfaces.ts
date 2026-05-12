@@ -22,7 +22,7 @@ export interface GenerationStore {
 }
 
 export interface ReplayGuard {
-  check(ticketId: number, seq: number, bundleGen: bigint): boolean;
+  check(clientIdPrefix: Uint8Array, ticketId: number, seq: number, bundleGen: bigint): boolean;
   checkSeqWindow(seq: number, counterBase: number, queryBudget: number): boolean;
 }
 

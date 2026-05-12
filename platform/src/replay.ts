@@ -6,6 +6,8 @@
  * expiration. This runs in Worker memory and is per-isolate.
  */
 
+import { bytesToHex } from './crypto';
+
 export interface ReplayEntry {
   ticketId: number;
   seq: number;
@@ -30,13 +32,18 @@ export class AntiReplayCache {
   }
 
   /**
-   * Check if a (ticketId, seq) pair has been seen recently.
+   * Check if a client-scoped (ticketId, seq) pair has been seen recently.
    * If not seen, records it and returns false.
    * If seen (replay detected), returns true.
    */
-  check(ticketId: number, seq: number, bundleGen: bigint): boolean {
+  check(
+    clientIdPrefix: Uint8Array,
+    ticketId: number,
+    seq: number,
+    bundleGen: bigint,
+  ): boolean {
     const now = Date.now();
-    const key = `${bundleGen}:${ticketId}:${seq}`;
+    const key = `${bytesToHex(clientIdPrefix)}:${bundleGen}:${ticketId}:${seq}`;
 
     // Periodic cleanup
     if (now - this.lastCleanup > this.ttlMs) {
