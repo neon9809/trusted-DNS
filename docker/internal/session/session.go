@@ -38,28 +38,7 @@ func (m *Manager) SetBundle(bundle *protocol.KeyBundle) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.bundle = bundle
-	m.queryKeys = make([]*protocol.QueryKeys, len(bundle.SessionTickets))
-	m.seqCounters = make([]uint32, len(bundle.SessionTickets))
-	m.totalQueries = 0
-	atomic.StoreInt32(&m.currentSlot, 0)
-
-	for i, ticket := range bundle.SessionTickets {
-		qk, err := protocol.DeriveQueryKeys(ticket.ResumeSeed[:])
-		if err != nil {
-			return fmt.Errorf("derive query keys for slot %d: %w", i, err)
-		}
-		m.queryKeys[i] = qk
-		m.seqCounters[i] = ticket.CounterBase
-	}
-
-	// Cancel any pending re-bootstrap countdown since we have a valid bundle now
-	m.rebootstrapTriggered.Store(0)
-
-	log.Printf("[session] installed bundle gen=%d with %d tickets, budget=%d",
-		bundle.BundleGen, len(bundle.SessionTickets), bundle.Policy.QueriesPerBundle)
-
-	return nil
+	return m.setBundleLocked(bundle)
 }
 
 // GetBundle returns the current KeyBundle.
@@ -67,6 +46,33 @@ func (m *Manager) GetBundle() *protocol.KeyBundle {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.bundle
+}
+
+// GetBundleGen returns the current bundle generation, if any.
+func (m *Manager) GetBundleGen() (uint64, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.bundle == nil {
+		return 0, false
+	}
+	return m.bundle.BundleGen, true
+}
+
+// SetBundleIfGenMatches installs a new bundle only if the current generation
+// still matches the expected value captured before a refresh started.
+func (m *Manager) SetBundleIfGenMatches(expectedGen uint64, bundle *protocol.KeyBundle) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.bundle == nil || m.bundle.BundleGen != expectedGen {
+		return false, nil
+	}
+
+	if err := m.setBundleLocked(bundle); err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // TicketInfo holds the information needed to send a query.
@@ -110,12 +116,12 @@ func (m *Manager) AcquireTicket() (*TicketInfo, error) {
 				Slot:      slot,
 			}
 
-				// Rotate to next ticket if this one is near exhaustion
-				if m.seqCounters[slot] >= ticket.CounterBase+uint32(ticket.QueryBudget) {
-					nextSlot := (slot + 1) % len(m.bundle.SessionTickets)
-					atomic.StoreInt32(&m.currentSlot, int32(nextSlot))
-					log.Printf("[session] ticket slot %d exhausted (seq=%d), rotating to slot %d", slot, m.seqCounters[slot], nextSlot)
-				}
+			// Rotate to next ticket if this one is near exhaustion
+			if m.seqCounters[slot] >= ticket.CounterBase+uint32(ticket.QueryBudget) {
+				nextSlot := (slot + 1) % len(m.bundle.SessionTickets)
+				atomic.StoreInt32(&m.currentSlot, int32(nextSlot))
+				log.Printf("[session] ticket slot %d exhausted (seq=%d), rotating to slot %d", slot, m.seqCounters[slot], nextSlot)
+			}
 
 			return info, nil
 		}
@@ -148,11 +154,11 @@ func (m *Manager) NeedsRefresh() bool {
 	// 2. Check if time threshold is reached (10 minutes before expiration)
 	now := time.Now().UnixMilli()
 	expireAt := int64(m.bundle.ExpireAtMs)
-	
+
 	// Refresh 10 minutes (600,000 ms) before expiration to give enough buffer
 	// against network delays and clock skew
-	timeThreshold := expireAt - 600000 
-	
+	timeThreshold := expireAt - 600000
+
 	if now >= timeThreshold {
 		log.Printf("[session] refresh needed: approaching expiration (now=%d, expireAt=%d)",
 			now, expireAt)
@@ -207,13 +213,21 @@ func (m *Manager) ClearBundle() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.bundle = nil
-	m.queryKeys = nil
-	m.seqCounters = nil
-	m.totalQueries = 0
-	atomic.StoreInt32(&m.currentSlot, 0)
+	m.clearBundleLocked()
+}
 
-	log.Println("[session] bundle cleared, re-bootstrap required")
+// ClearBundleIfGenMatches clears the current bundle only if the active bundle
+// still matches the generation that observed the failure.
+func (m *Manager) ClearBundleIfGenMatches(expectedGen uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.bundle == nil || m.bundle.BundleGen != expectedGen {
+		return false
+	}
+
+	m.clearBundleLocked()
+	return true
 }
 
 // TriggerRebootstrap schedules a re-bootstrap after 1 minute delay.
@@ -271,4 +285,39 @@ func (m *Manager) CancelRebootstrap() {
 		m.rebootstrapTriggered.Store(0)
 		log.Println("[session] re-bootstrap countdown cancelled")
 	}
+}
+
+func (m *Manager) setBundleLocked(bundle *protocol.KeyBundle) error {
+	m.bundle = bundle
+	m.queryKeys = make([]*protocol.QueryKeys, len(bundle.SessionTickets))
+	m.seqCounters = make([]uint32, len(bundle.SessionTickets))
+	m.totalQueries = 0
+	atomic.StoreInt32(&m.currentSlot, 0)
+
+	for i, ticket := range bundle.SessionTickets {
+		qk, err := protocol.DeriveQueryKeys(ticket.ResumeSeed[:])
+		if err != nil {
+			return fmt.Errorf("derive query keys for slot %d: %w", i, err)
+		}
+		m.queryKeys[i] = qk
+		m.seqCounters[i] = ticket.CounterBase
+	}
+
+	// Cancel any pending re-bootstrap countdown since we have a valid bundle now.
+	m.rebootstrapTriggered.Store(0)
+
+	log.Printf("[session] installed bundle gen=%d with %d tickets, budget=%d",
+		bundle.BundleGen, len(bundle.SessionTickets), bundle.Policy.QueriesPerBundle)
+
+	return nil
+}
+
+func (m *Manager) clearBundleLocked() {
+	m.bundle = nil
+	m.queryKeys = nil
+	m.seqCounters = nil
+	m.totalQueries = 0
+	atomic.StoreInt32(&m.currentSlot, 0)
+
+	log.Println("[session] bundle cleared, re-bootstrap required")
 }

@@ -91,6 +91,81 @@ func main() {
 
 	// refreshInProgress is an atomic flag to prevent concurrent refresh operations
 	var refreshInProgress atomic.Bool
+	var refreshFailures atomic.Int32
+	const maxRefreshFailures = 5
+
+	triggerRefresh := func(reason string) {
+		if !refreshInProgress.CompareAndSwap(false, true) {
+			log.Printf("[main] refresh already in progress, skipping %s trigger", reason)
+			return
+		}
+
+		baseGen, ok := sess.GetBundleGen()
+		if !ok {
+			refreshInProgress.Store(false)
+			log.Printf("[main] skipping %s refresh trigger: no active bundle", reason)
+			return
+		}
+
+		go func(baseGen uint64, reason string) {
+			defer refreshInProgress.Store(false)
+
+			refreshCtx, cancel := context.WithTimeout(rootCtx, 30*time.Second)
+			defer cancel()
+
+			newBundle, err := trans.Refresh(refreshCtx)
+			if err != nil {
+				currentGen, hasBundle := sess.GetBundleGen()
+				if !hasBundle || currentGen != baseGen {
+					log.Printf("[main] stale %s refresh failure ignored for gen=%d", reason, baseGen)
+					return
+				}
+
+				var protoErr *protocol.ErrorResponse
+				if errors.As(err, &protoErr) && protoErr.NeedsRebootstrap() {
+					if sess.ClearBundleIfGenMatches(baseGen) {
+						log.Printf("[main] %s refresh failed with session error, cleared bundle gen=%d for re-bootstrap", reason, baseGen)
+					} else {
+						log.Printf("[main] stale %s refresh session error ignored for gen=%d", reason, baseGen)
+						return
+					}
+				} else {
+					log.Printf("[main] %s refresh failed for gen=%d: %v", reason, baseGen, err)
+				}
+
+				failures := refreshFailures.Add(1)
+				log.Printf("[main] refresh failure count %d/%d after %s trigger", failures, maxRefreshFailures, reason)
+				if failures >= maxRefreshFailures {
+					log.Printf("[main] FATAL: refresh failed %d consecutive times, initiating container restart...",
+						maxRefreshFailures)
+					os.Exit(1)
+				}
+				return
+			}
+
+			applied, err := sess.SetBundleIfGenMatches(baseGen, newBundle)
+			if err != nil {
+				failures := refreshFailures.Add(1)
+				log.Printf("[main] set refreshed bundle failed after %s trigger (gen=%d): %v", reason, baseGen, err)
+				if failures >= maxRefreshFailures {
+					log.Printf("[main] FATAL: refresh apply failed %d consecutive times, initiating container restart...",
+						maxRefreshFailures)
+					os.Exit(1)
+				}
+				return
+			}
+			if !applied {
+				log.Printf("[main] stale %s refresh result ignored for gen=%d", reason, baseGen)
+				return
+			}
+
+			log.Printf("[main] %s refresh complete: gen=%d -> gen=%d", reason, baseGen, newBundle.BundleGen)
+
+			if failures := refreshFailures.Swap(0); failures > 0 {
+				log.Printf("[main] refresh succeeded after %d consecutive failures", failures)
+			}
+		}(baseGen, reason)
+	}
 
 	// DNS query handler
 	handler := func(ctx context.Context, query []byte) ([]byte, error) {
@@ -121,35 +196,14 @@ func main() {
 				if err := sess.SetBundle(bundle); err != nil {
 					return nil, fmt.Errorf("set bundle failed: %w", err)
 				}
+				refreshFailures.Store(0)
 				log.Printf("[main] re-bootstrap complete: gen=%d", bundle.BundleGen)
 			}
 		}
 
 		// Check if refresh is needed
 		if sess.NeedsRefresh() {
-			// Use atomic CompareAndSwap to ensure only one refresh goroutine runs at a time
-			if refreshInProgress.CompareAndSwap(false, true) {
-				go func() {
-					defer refreshInProgress.Store(false)
-					refreshCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-					newBundle, err := trans.Refresh(refreshCtx)
-					if err != nil {
-						// Check if session is invalid
-						var protoErr *protocol.ErrorResponse
-						if errors.As(err, &protoErr) && protoErr.NeedsRebootstrap() {
-							log.Printf("[main] refresh failed with session error, clearing bundle for re-bootstrap")
-							sess.ClearBundle()
-						} else {
-							log.Printf("[main] refresh failed: %v", err)
-						}
-						return
-					}
-					if err := sess.SetBundle(newBundle); err != nil {
-						log.Printf("[main] set new bundle failed: %v", err)
-					}
-				}()
-			}
+			triggerRefresh("query-hot-path")
 		}
 
 		// Send query through Worker
@@ -182,7 +236,9 @@ func main() {
 		config.WorkerURL, listenAddr)
 
 	// Start background refresh ticker
-	go refreshLoop(rootCtx, sess, trans)
+	go refreshLoop(rootCtx, sess, trans, triggerRefresh, func() {
+		refreshFailures.Store(0)
+	})
 
 	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
@@ -194,9 +250,15 @@ func main() {
 	log.Println("[main] Trusted-DNS Docker node stopped")
 }
 
-// refreshLoop periodically checks if the bundle needs refreshing.
-// If refresh fails more than 5 consecutive times, the process exits to restart the container.
-func refreshLoop(ctx context.Context, sess *session.Manager, trans *transport.Transport) {
+// refreshLoop periodically checks if the bundle needs refreshing and proactively
+// re-bootstraps when the active bundle has been cleared.
+func refreshLoop(
+	ctx context.Context,
+	sess *session.Manager,
+	trans *transport.Transport,
+	triggerRefresh func(reason string),
+	resetRefreshFailures func(),
+) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -242,6 +304,7 @@ func refreshLoop(ctx context.Context, sess *session.Manager, trans *transport.Tr
 						continue
 					}
 					consecutiveFailures = 0
+					resetRefreshFailures()
 					log.Printf("[main] proactive re-bootstrap complete: gen=%d", bundle.BundleGen)
 					continue
 				} else {
@@ -253,46 +316,7 @@ func refreshLoop(ctx context.Context, sess *session.Manager, trans *transport.Tr
 
 			if sess.NeedsRefresh() {
 				log.Println("[main] proactive refresh triggered")
-				newBundle, err := trans.Refresh(ctx)
-				if err != nil {
-					// Check if session is invalid
-					var protoErr *protocol.ErrorResponse
-					if errors.As(err, &protoErr) && protoErr.NeedsRebootstrap() {
-						log.Printf("[main] refresh failed with session error, clearing bundle for re-bootstrap")
-						sess.ClearBundle()
-						// IMPORTANT: Count this as a failure - worker may be having issues
-						consecutiveFailures++
-						log.Printf("[main] session error (attempt %d/%d): %v",
-							consecutiveFailures, maxConsecutiveFailures, protoErr)
-						if consecutiveFailures >= maxConsecutiveFailures {
-							log.Printf("[main] FATAL: session errors %d consecutive times, initiating container restart...",
-								maxConsecutiveFailures)
-							os.Exit(1)
-						}
-						continue
-					}
-
-					consecutiveFailures++
-					log.Printf("[main] proactive refresh failed (attempt %d/%d): %v",
-						consecutiveFailures, maxConsecutiveFailures, err)
-
-					if consecutiveFailures >= maxConsecutiveFailures {
-						log.Printf("[main] FATAL: refresh failed %d consecutive times, initiating container restart...",
-							maxConsecutiveFailures)
-						os.Exit(1)
-					}
-					continue
-				}
-
-				// Refresh succeeded, reset failure counter
-				if consecutiveFailures > 0 {
-					log.Printf("[main] refresh succeeded, resetting failure counter from %d", consecutiveFailures)
-					consecutiveFailures = 0
-				}
-
-				if err := sess.SetBundle(newBundle); err != nil {
-					log.Printf("[main] set refreshed bundle failed: %v", err)
-				}
+				triggerRefresh("refresh-loop")
 			}
 		}
 	}
