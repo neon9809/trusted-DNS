@@ -1,11 +1,3 @@
-/**
- * Trusted-DNS Worker API Handlers
- *
- * Implements Bootstrap, Query, and Refresh request handlers.
- * Each handler parses the binary protocol, performs verification,
- * and returns the appropriate response.
- */
-
 import {
   decodeHeader,
   HEADER_SIZE,
@@ -18,25 +10,18 @@ import {
   ERR_INTERNAL,
   buildErrorResponse,
 } from './protocol';
-
-import type { CloudflareEnv } from './adapters/cloudflare/env';
 import { binaryResponse } from './core/binary-response';
 import { handleBootstrap } from './core/services/bootstrap';
 import { handleQuery } from './core/services/query';
 import { handleRefresh } from './core/services/refresh';
-import { createCloudflareServiceDeps } from './adapters/cloudflare/service-deps';
+import type { ServiceDeps } from './core/services/deps';
+import type { Logger } from './core/interfaces';
 
-// ─── Types ──────────────────────────────────────────────────────────
-
-export type Env = CloudflareEnv;
-
-// ─── Main Request Router ────────────────────────────────────────────
-
-export async function handleRequest(
+export async function handleProtocolRequest(
   request: Request,
-  env: Env,
+  deps: ServiceDeps,
+  logger?: Pick<Logger, 'error'>,
 ): Promise<Response> {
-  // Only accept POST with binary body
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
   }
@@ -60,7 +45,6 @@ export async function handleRequest(
   }
 
   const payload = data.slice(HEADER_SIZE, HEADER_SIZE + header.payloadLen);
-  const deps = createCloudflareServiceDeps(env);
 
   try {
     switch (header.msgType) {
@@ -75,11 +59,11 @@ export async function handleRequest(
           buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_BAD_TYPE),
         );
     }
-  } catch (err: any) {
-    console.error('Handler error:', err.message);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'unknown error';
+    logger?.error?.('Protocol handler error', { message });
     return binaryResponse(
       buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_INTERNAL),
     );
   }
 }
- 

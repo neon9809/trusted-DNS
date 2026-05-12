@@ -87,12 +87,12 @@ v2 中 Worker 会先基于请求 header 的 `client_id_prefix` 进行 client 路
 
 仓库提供一个本地冒烟脚本，用于验证 `CLIENT_REGISTRY` 的 prefix 派生与映射逻辑是否自洽：
 
-- [verify-client-registry.js](file:///workspace/platform/worker/scripts/verify-client-registry.js)
+- [verify-client-registry.js](file:///workspace/platform/cloudflare_worker/scripts/verify-client-registry.js)
 
 运行方式（示例）：
 
 ```bash
-cd platform/worker
+cd platform/cloudflare_worker
 export DOH_UPSTREAMS='["https://cloudflare-dns.com/dns-query"]'
 export DOH_TIMEOUT_MS='5000'
 export CLIENT_REGISTRY='[{"root_seed":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","enabled":true},{"root_seed":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","enabled":true}]'

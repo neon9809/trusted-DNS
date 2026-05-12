@@ -76,7 +76,8 @@ The repository also now reserves `platform/deno/` and `platform/fastly/` as v2.1
 - Service logic now uses dependency injection, so runtime-specific Cloudflare wiring is separated from protocol flow
 - Static multi-client registry is configured entirely through environment variables, without introducing a control plane or external database
 - End-to-end smoke scripts cover bootstrap, query, refresh, registry verification, and single-Worker multi-client validation
-- The repository now uses `platform/worker` as the active Cloudflare runtime root, with `platform/deno` and `platform/fastly` reserved for v2.1 PoC work
+- The repository now uses `platform/cloudflare_worker` as the active Cloudflare runtime root, with `platform/deno` and `platform/fastly` reserved for v2.1 PoC work
+- Shared protocol and service-core logic is now placed under `platform/src`, so platform directories stay focused on entrypoints and adapters
 
 **Deployment**
 
@@ -168,14 +169,14 @@ but they still consume ticket/query budget and can still lead to a refresh.
 
 **Option A: One-Click Deploy (Recommended)**
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/neon9809/trusted-DNS/tree/main/platform/worker)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/neon9809/trusted-DNS/tree/main/platform/cloudflare_worker)
 
 *Note: The one-click deploy template now pre-fills `DOH_UPSTREAMS` and a sample `CLIENT_REGISTRY`. Replace the sample `root_seed` values with your own 64-character hex seeds, or remove `CLIENT_REGISTRY` if you want single-client mode. Generate each seed using `openssl rand -hex 32`.*
 
 **Option B: Manual Deploy**
 
 ```bash
-cd platform/worker
+cd platform/cloudflare_worker
 cp ../../examples/worker.env.example .env
 
 # Edit wrangler.toml with your ROOT_SEED, DOH upstreams, and optional CLIENT_REGISTRY
@@ -316,6 +317,7 @@ Trusted-DNS/
 │   └── threat-model.md
 ├── platform/
 │   ├── README.md
+│   ├── src/                    # Shared protocol and service-core
 │   ├── deno/
 │   │   ├── main.ts               # Deno PoC entry skeleton
 │   │   ├── kv-store.ts           # Deno KV adapter skeleton
@@ -324,15 +326,10 @@ Trusted-DNS/
 │   │   ├── index.ts              # Fastly PoC entry skeleton
 │   │   ├── store.ts              # Fastly adapter skeleton
 │   │   └── config/
-│   └── worker/
+│   └── cloudflare_worker/
 │       ├── src/
-│       │   ├── index.ts          # Worker entry point
-│       │   ├── handlers.ts       # Bootstrap/Query/Refresh handlers
-│       │   ├── protocol.ts       # Binary protocol definitions
-│       │   ├── crypto.ts         # HKDF, AEAD, HMAC utilities
-│       │   ├── tickets.ts        # Ticket issuance and verification
-│       │   ├── resolver.ts       # DoH upstream resolver
-│       │   ├── replay.ts         # Anti-replay cache
+│       │   ├── index.ts          # Cloudflare Worker entry point
+│       │   ├── adapters/         # Cloudflare runtime wiring
 │       │   └── generation-store.ts # Durable Object for gen state
 │       ├── wrangler.toml
 │       └── package.json

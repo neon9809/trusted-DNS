@@ -1,4 +1,4 @@
-import { bytesToHex } from '../../crypto';
+import { bytesToHex } from '../../../../src/crypto';
 import type { CloudflareEnv } from './env';
 import type { GenerationState } from '../../generation-store';
 

@@ -1,14 +1,14 @@
-# Deno Platform Skeleton
+# Deno Platform PoC
 
-This directory is reserved for the Trusted-DNS v2.1 Deno PoC.
+This directory hosts the Trusted-DNS v2.1 Deno PoC entrypoint and Deno-specific state wiring.
 
 ## Intended Files
 
-- `main.ts`: Deno HTTP entrypoint
-- `kv-store.ts`: Deno KV-backed state adapter
+- `main.ts`: Deno HTTP entrypoint wired to shared `platform/src` service-core
+- `kv-store.ts`: Deno KV-backed `GenerationStore` adapter
 - `config/`: Deno runtime config notes or helpers
 
 ## Scope
 
-The first goal is to validate Bootstrap, Query, and Refresh using the existing service-core split,
-not to build a second production platform immediately.
+The goal is to validate Bootstrap, Query, and Refresh on Deno without creating a second heavyweight implementation.
+The PoC keeps runtime-specific logic local and reuses shared protocol and service code from `platform/src`.

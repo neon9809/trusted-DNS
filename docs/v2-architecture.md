@@ -360,9 +360,11 @@ v2 允许的核心持久状态依然非常少：
 
 ```text
 platform/
-  worker/
+  src/
+    core/
+    ...
+  cloudflare_worker/
     src/
-      core/
       adapters/
     wrangler.toml
   deno/
@@ -371,14 +373,15 @@ platform/
 
 说明：
 
-- `platform/worker/src/core/` 用于放平台无关逻辑
-- `platform/worker/src/adapters/` 用于放状态与运行时适配
+- `platform/src/` 用于放平台无关逻辑
+- `platform/cloudflare_worker/src/adapters/` 用于放状态与运行时适配
 
 如果后续仍需保留各平台独立入口，也可使用：
 
 ```text
 platform/
-  worker/
+  src/
+  cloudflare_worker/
     src/
     wrangler.toml
   deno/

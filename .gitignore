@@ -13,7 +13,7 @@ dist/
 docker/trusted-dns
 
 # Worker build
-platform/worker/.wrangler/
+platform/cloudflare_worker/.wrangler/
 
 # IDE
 .vscode/

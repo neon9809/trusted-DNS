@@ -1,14 +1,14 @@
-# Fastly Platform Skeleton
+# Fastly Platform PoC
 
-This directory is reserved for the Trusted-DNS v2.1 Fastly PoC.
+This directory hosts the Trusted-DNS v2.1 Fastly PoC entrypoint and Fastly-specific adapter notes.
 
 ## Intended Files
 
-- `index.ts`: Fastly entrypoint
-- `store.ts`: Fastly state adapter
+- `index.ts`: Fastly entrypoint wired to shared `platform/src` service-core
+- `store.ts`: Fastly-oriented `GenerationStore` adapter shape
 - `config/`: Fastly runtime config notes or helpers
 
 ## Scope
 
-The initial goal is to validate runtime feasibility and adapter boundaries,
-not to promise production-grade support in the first PoC.
+The goal is to validate runtime feasibility and adapter boundaries without expanding the state model.
+The PoC keeps platform-specific logic minimal and reuses the shared core from `platform/src`.

@@ -4,7 +4,7 @@ import {
   getGenerationState,
   markGenerationUsed,
 } from './generation-store';
-import type { ServiceDeps } from '../../core/services/deps';
+import type { ServiceDeps } from '../../../../src/core/services/deps';
 import { createCloudflareClientSelector } from './client-registry';
 
 export function createCloudflareServiceDeps(env: CloudflareEnv): ServiceDeps {

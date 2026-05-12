@@ -29,7 +29,7 @@
 
 一键 smoke suite（启动本地 DoH mock + Worker，然后跑完 bootstrap/query/refresh）：
 
-- `platform/worker/scripts/run-smoke-suite.js`
+- `platform/cloudflare_worker/scripts/run-smoke-suite.js`
 
 ## 已知限制
 

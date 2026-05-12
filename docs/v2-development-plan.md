@@ -568,7 +568,7 @@ docs/
   migration-v1-to-v2.md
 ```
 
-此结构以 `platform/` 作为平台实现根目录；当前仓库已先落位 `platform/worker/`，后续可直接在同级继续推进 Deno / Fastly。
+此结构以 `platform/` 作为平台实现根目录；当前仓库已先落位 `platform/cloudflare_worker/`，后续可直接在同级继续推进 Deno / Fastly。
 
 ## 11. 测试策略
 

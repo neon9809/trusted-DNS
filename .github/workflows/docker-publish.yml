@@ -37,7 +37,7 @@ jobs:
             docker:
               - 'docker/**'
             worker:
-              - 'platform/worker/**'
+              - 'platform/cloudflare_worker/**'
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -111,11 +111,11 @@ jobs:
           version: 10
 
       - name: Install dependencies
-        working-directory: ./platform/worker
+        working-directory: ./platform/cloudflare_worker
         run: pnpm install
 
       - name: Type check
-        working-directory: ./platform/worker
+        working-directory: ./platform/cloudflare_worker
         run: pnpm typecheck
 
   build-docker-binary:
