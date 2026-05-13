@@ -20,6 +20,10 @@ export interface GenerationBackend {
   markUsed(clientId: Uint8Array, gen: number): Promise<GenerationStateLike>;
 }
 
+export interface RequestHooks {
+  defer(task: () => Promise<unknown>): void;
+}
+
 export interface ServiceDeps {
   clients: ClientSelector;
   generation: GenerationBackend;

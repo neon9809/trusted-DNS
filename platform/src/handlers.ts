@@ -14,13 +14,14 @@ import { binaryResponse } from './core/binary-response';
 import { handleBootstrap } from './core/services/bootstrap';
 import { handleQuery } from './core/services/query';
 import { handleRefresh } from './core/services/refresh';
-import type { ServiceDeps } from './core/services/deps';
+import type { RequestHooks, ServiceDeps } from './core/services/deps';
 import type { Logger } from './core/interfaces';
 
 export async function handleProtocolRequest(
   request: Request,
   deps: ServiceDeps,
   logger?: Pick<Logger, 'error'>,
+  requestHooks?: RequestHooks,
 ): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405 });
@@ -51,7 +52,7 @@ export async function handleProtocolRequest(
       case MSG_BOOTSTRAP_REQ:
         return await handleBootstrap(header, payload, deps);
       case MSG_QUERY_REQ:
-        return await handleQuery(header, payload, deps);
+        return await handleQuery(header, payload, deps, requestHooks);
       case MSG_REFRESH_REQ:
         return await handleRefresh(header, payload, deps);
       default:

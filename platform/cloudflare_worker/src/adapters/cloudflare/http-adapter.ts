@@ -1,6 +1,21 @@
 import { createRuntimeHttpHandler } from '../../../../src/runtime-service';
+import type { RequestHooks } from '../../../../src/core/services/deps';
 import type { CloudflareEnv } from './env';
 import { createCloudflareServiceDeps } from './service-deps';
+
+function createCloudflareRequestHooks(
+  ctx: ExecutionContext,
+): RequestHooks {
+  return {
+    defer(task) {
+      ctx.waitUntil(task().catch((error) => {
+        console.warn('Deferred task failed', {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }));
+    },
+  };
+}
 
 export function createCloudflareHttpAdapter(env: CloudflareEnv) {
   const service = createRuntimeHttpHandler({
@@ -23,8 +38,9 @@ export function createCloudflareHttpAdapter(env: CloudflareEnv) {
   });
 
   return {
-    handle(request: Request): Promise<Response> {
-      return service.handle(request);
+    handle(request: Request, ctx?: ExecutionContext): Promise<Response> {
+      const requestHooks = ctx ? createCloudflareRequestHooks(ctx) : undefined;
+      return service.handle(request, requestHooks);
     },
   };
 }

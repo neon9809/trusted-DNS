@@ -1,7 +1,7 @@
 import { createStaticClientSelector, type StaticClientSelectorConfig } from './client-registry';
 import { handleProtocolRequest } from './handlers';
 import { createHttpService } from './core/http-service';
-import type { GenerationBackend, ServiceDeps } from './core/services/deps';
+import type { GenerationBackend, RequestHooks, ServiceDeps } from './core/services/deps';
 import type { Logger } from './core/interfaces';
 
 export interface RuntimeHttpConfig {
@@ -26,14 +26,14 @@ export function createRuntimeHttpHandler(options: RuntimeServiceOptions) {
   };
 
   const service = createHttpService(options.http, {
-    handleProtocolRequest(request) {
-      return handleProtocolRequest(request, deps, options.logger);
+    handleProtocolRequest(request, requestHooks) {
+      return handleProtocolRequest(request, deps, options.logger, requestHooks);
     },
   });
 
   return {
-    handle(request: Request) {
-      return service.handle(request);
+    handle(request: Request, requestHooks?: RequestHooks) {
+      return service.handle(request, requestHooks);
     },
   };
 }

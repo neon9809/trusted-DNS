@@ -7,6 +7,6 @@ export { GenerationStore };
 export default {
   async fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): Promise<Response> {
     const adapter = createCloudflareHttpAdapter(env);
-    return adapter.handle(request);
+    return adapter.handle(request, ctx);
   },
 };

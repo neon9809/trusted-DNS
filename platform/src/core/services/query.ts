@@ -28,7 +28,7 @@ import { verifySessionTicket } from '../../tickets';
 import { resolve, parseUpstreams, ResolverConfig } from '../../resolver';
 import { AntiReplayCache } from '../../replay';
 import { binaryResponse } from '../binary-response';
-import type { ServiceDeps } from './deps';
+import type { RequestHooks, ServiceDeps } from './deps';
 
 const replayCache = new AntiReplayCache(8192, 120_000);
 
@@ -36,6 +36,7 @@ export async function handleQuery(
   header: ProtocolHeader,
   payload: Uint8Array,
   deps: ServiceDeps,
+  requestHooks?: RequestHooks,
 ): Promise<Response> {
   const clientConfig = await deps.clients.getClientConfig(header.clientIdPrefix);
   if (!clientConfig) {
@@ -108,7 +109,11 @@ export async function handleQuery(
     );
   }
 
-  await deps.generation.markUsed(clientId, Number(ticket.bundleGen));
+  if (requestHooks) {
+    requestHooks.defer(() => deps.generation.markUsed(clientId, Number(ticket.bundleGen)));
+  } else {
+    await deps.generation.markUsed(clientId, Number(ticket.bundleGen));
+  }
 
   const queryKeys = await deriveQueryKeys(ticket.resumeSeed);
 
