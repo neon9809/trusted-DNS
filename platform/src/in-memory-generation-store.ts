@@ -21,6 +21,10 @@ export function createInMemoryGenerationBackend(): GenerationBackend {
       };
     },
 
+    async getCachedState() {
+      return null;
+    },
+
     async advance(clientId, newGen) {
       const key = keyFor(clientId);
       const current = states.get(key);

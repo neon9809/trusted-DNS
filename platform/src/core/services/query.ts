@@ -28,7 +28,12 @@ import { verifySessionTicket } from '../../tickets';
 import { resolve, parseUpstreams, ResolverConfig } from '../../resolver';
 import { AntiReplayCache } from '../../replay';
 import { binaryResponse } from '../binary-response';
-import type { RequestHooks, ServiceDeps } from './deps';
+import type {
+  CachedGenerationStateLike,
+  GenerationStateLike,
+  RequestHooks,
+  ServiceDeps,
+} from './deps';
 
 const replayCache = new AntiReplayCache(8192, 120_000);
 
@@ -78,10 +83,27 @@ export async function handleQuery(
 
   const ticket = decodeSessionTicket(ticketBlob);
   const nowMs = deps.nowMs();
+  const ticketBundleGen = Number(ticket.bundleGen);
+  const cachedGenState = await deps.generation.getCachedState(clientId);
+  let genState: GenerationStateLike | CachedGenerationStateLike | null = cachedGenState;
 
-  const genState = await deps.generation.getState(clientId);
+  if (!genState) {
+    genState = await deps.generation.getState(clientId);
+  } else if (ticketBundleGen > genState.latestBundleGen) {
+    genState = await deps.generation.getState(clientId);
+  } else if (
+    ticketBundleGen < genState.latestBundleGen
+    && cachedGenState
+    && cachedGenState.source !== 'do'
+  ) {
+    genState = await deps.generation.getState(clientId);
+  }
 
-  if (Number(ticket.bundleGen) < genState.latestBundleGen) {
+  if (!genState) {
+    throw new Error('generation state unavailable');
+  }
+
+  if (ticketBundleGen < genState.latestBundleGen) {
     return binaryResponse(
       buildErrorResponse(header.clientIdPrefix, header.bundleGen, ERR_OLD_GENERATION),
     );
@@ -110,9 +132,9 @@ export async function handleQuery(
   }
 
   if (requestHooks) {
-    requestHooks.defer(() => deps.generation.markUsed(clientId, Number(ticket.bundleGen)));
+    requestHooks.defer(() => deps.generation.markUsed(clientId, ticketBundleGen));
   } else {
-    await deps.generation.markUsed(clientId, Number(ticket.bundleGen));
+    await deps.generation.markUsed(clientId, ticketBundleGen);
   }
 
   const queryKeys = await deriveQueryKeys(ticket.resumeSeed);

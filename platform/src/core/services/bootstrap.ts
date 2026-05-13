@@ -64,20 +64,21 @@ export async function handleBootstrap(
     );
   }
 
-  const genState = await deps.generation.getState(clientId);
+  const genState = await deps.generation.getState(clientId, { consistency: 'strong' });
   const newGen = BigInt(genState.latestBundleGen + 1);
 
-  await deps.generation.advance(clientId, Number(newGen));
+  const committedState = await deps.generation.advance(clientId, Number(newGen));
+  const committedGen = BigInt(committedState.latestBundleGen);
 
   const bundle = await issueKeyBundle(
-    clientId, newGen, keys.ticketAuthKey, keys.refreshAuthKey,
+    clientId, committedGen, keys.ticketAuthKey, keys.refreshAuthKey,
   );
 
   const bundleBytes = serializeKeyBundle(bundle);
   const aad = encodeHeader({
     ...header,
     msgType: MSG_BOOTSTRAP_RESP,
-    bundleGen: newGen,
+    bundleGen: committedGen,
     payloadLen: 0,
   });
 
@@ -87,7 +88,7 @@ export async function handleBootstrap(
   const respPayload = new Uint8Array(respPayloadLen);
   const rpDv = new DataView(respPayload.buffer);
   rpDv.setBigUint64(0, now, false);
-  rpDv.setBigUint64(8, newGen, false);
+  rpDv.setBigUint64(8, committedGen, false);
   respPayload.set(nonce, 16);
   respPayload.set(ciphertext, 16 + NONCE_SIZE);
 
@@ -96,7 +97,7 @@ export async function handleBootstrap(
     msgType: MSG_BOOTSTRAP_RESP,
     flags: 0,
     clientIdPrefix: clientId.slice(0, 8),
-    bundleGen: newGen,
+    bundleGen: committedGen,
     ticketId: 0,
     seq: 0,
     payloadLen: respPayloadLen,

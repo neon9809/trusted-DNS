@@ -10,6 +10,9 @@ DOH_UPSTREAMS = '["https://dns.google/dns-query","https://cloudflare-dns.com/dns
 CLIENT_REGISTRY = '[{"root_seed":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","enabled":true},{"root_seed":"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789","enabled":true}]'
 # Optional: Custom path for the protocol endpoint (default: /dns-query)
 # PROTOCOL_PATH = "/custom-path"
+# Optional: local isolate cache TTL for query generation reads in milliseconds.
+# Set to "0" to disable the cache and always read from Durable Object.
+# GENERATION_CACHE_TTL_MS = "120000"
 [durable_objects]
 bindings = [
   { name = "GENERATION_STORE", class_name = "GenerationStore" }

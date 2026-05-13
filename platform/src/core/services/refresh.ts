@@ -58,7 +58,7 @@ export async function handleRefresh(
   const refreshTicket = decodeRefreshTicket(refreshTicketBlob);
   const nowMs = deps.nowMs();
 
-  const genState = await deps.generation.getState(clientId);
+  const genState = await deps.generation.getState(clientId, { consistency: 'strong' });
 
   const currentGen = BigInt(genState.latestBundleGen);
   const ticketError = await verifyRefreshTicket(
@@ -72,10 +72,11 @@ export async function handleRefresh(
   }
 
   const newGen = currentGen + 1n;
-  await deps.generation.advance(clientId, Number(newGen));
+  const committedState = await deps.generation.advance(clientId, Number(newGen));
+  const committedGen = BigInt(committedState.latestBundleGen);
 
   const bundle = await issueKeyBundle(
-    clientId, newGen, keys.ticketAuthKey, keys.refreshAuthKey,
+    clientId, committedGen, keys.ticketAuthKey, keys.refreshAuthKey,
   );
 
   const bundleBytes = serializeKeyBundle(bundle);
@@ -84,7 +85,7 @@ export async function handleRefresh(
     msgType: MSG_REFRESH_RESP,
     flags: 0,
     clientIdPrefix: clientId.slice(0, 8),
-    bundleGen: newGen,
+    bundleGen: committedGen,
     ticketId: 0,
     seq: 0,
     payloadLen: 0,
@@ -97,7 +98,7 @@ export async function handleRefresh(
   const respPayload = new Uint8Array(respPayloadLen);
   const rpDv = new DataView(respPayload.buffer);
   rpDv.setBigUint64(0, nowMs, false);
-  rpDv.setBigUint64(8, newGen, false);
+  rpDv.setBigUint64(8, committedGen, false);
   respPayload.set(nonce, 16);
   respPayload.set(ciphertext, 16 + NONCE_SIZE);
 
@@ -106,7 +107,7 @@ export async function handleRefresh(
     msgType: MSG_REFRESH_RESP,
     flags: 0,
     clientIdPrefix: clientId.slice(0, 8),
-    bundleGen: newGen,
+    bundleGen: committedGen,
     ticketId: 0,
     seq: 0,
     payloadLen: respPayloadLen,

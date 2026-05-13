@@ -1,6 +1,7 @@
 import type { CloudflareEnv } from './env';
 import {
   advanceGenerationState,
+  getCachedGenerationState,
   getGenerationState,
   markGenerationUsed,
 } from './generation-store';
@@ -11,8 +12,11 @@ export function createCloudflareServiceDeps(env: CloudflareEnv): ServiceDeps {
   return {
     clients: createCloudflareClientSelector(env),
     generation: {
-      getState(clientId) {
-        return getGenerationState(env, clientId);
+      getState(clientId, options) {
+        return getGenerationState(env, clientId, options);
+      },
+      getCachedState(clientId) {
+        return getCachedGenerationState(env, clientId);
       },
       advance(clientId, newGen) {
         return advanceGenerationState(env, clientId, newGen);

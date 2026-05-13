@@ -24,6 +24,10 @@ export function createFastlyGenerationBackend(store: FastlyStoreLike): Generatio
       };
     },
 
+    async getCachedState() {
+      return null;
+    },
+
     async advance(clientId, newGen) {
       const key = keyFor(clientId);
       const current = (await store.get(key)) ?? {

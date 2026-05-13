@@ -23,6 +23,10 @@ export function createDenoKvGenerationBackend(kv: DenoKvLike): GenerationBackend
       };
     },
 
+    async getCachedState() {
+      return null;
+    },
+
     async advance(clientId, newGen) {
       const current = await this.getState(clientId);
       if (newGen <= current.latestBundleGen) {

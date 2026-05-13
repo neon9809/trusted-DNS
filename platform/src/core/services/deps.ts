@@ -14,8 +14,21 @@ export interface GenerationStateLike {
   updatedAt?: number;
 }
 
+export interface GenerationReadOptions {
+  consistency?: 'eventual' | 'strong';
+}
+
+export interface CachedGenerationStateLike extends GenerationStateLike {
+  fetchedAt: number;
+  source: 'do' | 'local-write';
+}
+
 export interface GenerationBackend {
-  getState(clientId: Uint8Array): Promise<GenerationStateLike>;
+  getState(
+    clientId: Uint8Array,
+    options?: GenerationReadOptions,
+  ): Promise<GenerationStateLike>;
+  getCachedState(clientId: Uint8Array): Promise<CachedGenerationStateLike | null>;
   advance(clientId: Uint8Array, newGen: number): Promise<GenerationStateLike>;
   markUsed(clientId: Uint8Array, gen: number): Promise<GenerationStateLike>;
 }
