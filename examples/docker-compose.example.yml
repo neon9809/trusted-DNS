@@ -28,6 +28,10 @@ services:
       # Options: none, tcp443, icmp, icmp,tcp443
       PROBE_MODE: "tcp443"
 
+      # Optional: Total probe budget per DNS query in milliseconds
+      # 0 means wait for all probe results before reordering.
+      PROBE_BUDGET_MS: "50"
+
       # Optional: Listen address (default: 0.0.0.0:53)
       LISTEN_ADDR: "0.0.0.0:53"
 

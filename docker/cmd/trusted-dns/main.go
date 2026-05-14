@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -76,6 +77,7 @@ func main() {
 	// Initialize probe engine
 	probeConfig := probe.Config{
 		Mode:      probe.Mode(config.ProbeMode),
+		Budget:    config.ProbeBudget,
 		Timeout:   2 * time.Second,
 		MaxProbes: 8,
 	}
@@ -329,6 +331,7 @@ type Config struct {
 	ProtocolPath     string
 	ListenAddr       string
 	ProbeMode        string
+	ProbeBudget      time.Duration
 	TicketsPerBundle int
 	QueriesPerBundle int
 }
@@ -356,6 +359,15 @@ func loadConfig() (*Config, error) {
 		probeMode = "tcp443"
 	}
 
+	probeBudget := 50 * time.Millisecond
+	if rawProbeBudget := os.Getenv("PROBE_BUDGET_MS"); rawProbeBudget != "" {
+		parsedProbeBudget, err := strconv.Atoi(rawProbeBudget)
+		if err != nil || parsedProbeBudget < 0 {
+			return nil, fmt.Errorf("PROBE_BUDGET_MS must be a non-negative integer")
+		}
+		probeBudget = time.Duration(parsedProbeBudget) * time.Millisecond
+	}
+
 	protocolPath := os.Getenv("PROTOCOL_PATH")
 	if protocolPath == "" {
 		protocolPath = "/dns-query"
@@ -367,5 +379,6 @@ func loadConfig() (*Config, error) {
 		RootSeed:     rootSeed,
 		ListenAddr:   listenAddr,
 		ProbeMode:    probeMode,
+		ProbeBudget:  probeBudget,
 	}, nil
 }

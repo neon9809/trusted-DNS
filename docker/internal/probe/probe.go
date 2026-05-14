@@ -25,6 +25,7 @@ const (
 // Config holds probe engine configuration.
 type Config struct {
 	Mode      Mode
+	Budget    time.Duration // total per-query budget; 0 waits for all probes
 	Timeout   time.Duration
 	MaxProbes int // max concurrent probes
 }
@@ -33,6 +34,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Mode:      ModeTCP443,
+		Budget:    50 * time.Millisecond,
 		Timeout:   2 * time.Second,
 		MaxProbes: 8,
 	}
@@ -74,6 +76,10 @@ func (e *Engine) ProbeAddresses(ctx context.Context, ips []net.IP) []Result {
 		ips = ips[:maxProbes]
 	}
 
+	if e.config.Budget > 0 {
+		return e.probeAddressesWithBudget(ctx, ips, e.config.Budget)
+	}
+
 	results := make([]Result, len(ips))
 	var wg sync.WaitGroup
 
@@ -94,6 +100,69 @@ func (e *Engine) ProbeAddresses(ctx context.Context, ips []net.IP) []Result {
 		}
 		return results[i].RTT < results[j].RTT
 	})
+
+	return results
+}
+
+type probeOutcome struct {
+	result Result
+}
+
+func (e *Engine) probeAddressesWithBudget(ctx context.Context, ips []net.IP, budget time.Duration) []Result {
+	budgetCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+
+	outcomes := make(chan probeOutcome, len(ips))
+	for _, ip := range ips {
+		go func(addr net.IP) {
+			result := e.probeOne(budgetCtx, addr)
+			if !result.Reachable {
+				return
+			}
+
+			select {
+			case outcomes <- probeOutcome{result: result}:
+			case <-budgetCtx.Done():
+			}
+		}(ip)
+	}
+
+	completed := make([]Result, 0, len(ips))
+	for {
+		select {
+		case outcome := <-outcomes:
+			completed = append(completed, outcome.result)
+			if len(completed) == len(ips) {
+				return buildBudgetedResults(ips, completed)
+			}
+		case <-budgetCtx.Done():
+			return buildBudgetedResults(ips, completed)
+		}
+	}
+}
+
+func buildBudgetedResults(original []net.IP, completed []Result) []Result {
+	if len(completed) == 0 {
+		return nil
+	}
+
+	sort.SliceStable(completed, func(i, j int) bool {
+		return completed[i].RTT < completed[j].RTT
+	})
+
+	results := make([]Result, 0, len(original))
+	seen := make(map[string]struct{}, len(completed))
+	for _, result := range completed {
+		results = append(results, result)
+		seen[result.IP.String()] = struct{}{}
+	}
+
+	for _, ip := range original {
+		if _, ok := seen[ip.String()]; ok {
+			continue
+		}
+		results = append(results, Result{IP: ip})
+	}
 
 	return results
 }
