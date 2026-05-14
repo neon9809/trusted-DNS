@@ -154,3 +154,33 @@ SEED_A='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
 SEED_B='abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789' \
 node scripts/run-smoke-suite.js
 ```
+
+## 13. Docker 侧一键冒烟
+
+如果你想直接验证 Docker 节点这条端到端链路，而不是只测 Worker，可以使用：
+
+- [run-smoke-suite.js](file:///workspace/docker/scripts/run-smoke-suite.js)
+
+这个脚本会自动完成：
+
+- 启动本地 DoH mock
+- 启动本地 Cloudflare Worker 开发服务
+- 启动本地 Docker 节点进程
+- 通过 UDP 入口发送一次真实 DNS 查询并校验响应
+
+示例：
+
+```bash
+cd docker
+node scripts/run-smoke-suite.js
+```
+
+可选环境变量：
+
+```bash
+ROOT_SEED='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' \
+PROBE_MODE='none' \
+PROBE_BUDGET_MS='50' \
+DNS_PORT='1053' \
+node scripts/run-smoke-suite.js
+```

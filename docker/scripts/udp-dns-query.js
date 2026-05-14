@@ -88,8 +88,15 @@ async function main() {
   console.log(JSON.stringify({ host, port, name, ...out }, null, 2));
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+module.exports = {
+  buildQuery,
+  parseFirstA,
+  queryOnce,
+};
 
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
